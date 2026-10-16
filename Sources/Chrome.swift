@@ -15,16 +15,72 @@ final class FlippedView: NSView {
     override func layout() { super.layout(); onLayout?() }
 }
 
+@MainActor
+final class ChromeWindowDrag {
+    private var downPoint: NSPoint?
+    private var originalOrigin: NSPoint?
+    private(set) var didMove = false
+    func begin(_ event: NSEvent, in window: NSWindow?) {
+        guard let window, !window.styleMask.contains(.fullScreen) else { return }
+        downPoint = window.convertPoint(toScreen: event.locationInWindow)
+        originalOrigin = window.frame.origin
+        didMove = false
+    }
+    func update(_ event: NSEvent, in window: NSWindow?) {
+        guard let window, let downPoint, let originalOrigin else { return }
+        let point = window.convertPoint(toScreen: event.locationInWindow)
+        let dx = point.x - downPoint.x, dy = point.y - downPoint.y
+        guard didMove || hypot(dx, dy) >= 3 else { return }
+        didMove = true
+        window.setFrameOrigin(NSPoint(x: originalOrigin.x + dx, y: originalOrigin.y + dy))
+    }
+    func end() { downPoint = nil; originalOrigin = nil; didMove = false }
+}
+
 final class HeaderView: NSView {
+    private let drag = ChromeWindowDrag()
+    var leadingIsInactive = false { didSet { needsDisplay = true } }
     override var isFlipped: Bool { true }
-    override var mouseDownCanMoveWindow: Bool { true }
+    override var mouseDownCanMoveWindow: Bool { false }
     override func mouseDown(with event: NSEvent) {
         if event.clickCount == 2 { window?.performZoom(nil) }
-        else { window?.performDrag(with: event) }
+        else { drag.begin(event, in: window) }
+    }
+    override func mouseDragged(with event: NSEvent) { drag.update(event, in: window) }
+    override func mouseUp(with event: NSEvent) { drag.end() }
+    override func draw(_ dirtyRect: NSRect) {
+        if leadingIsInactive {
+            NSColor.black.withAlphaComponent(0.20).setFill()
+            NSRect(x: 0, y: 0, width: 80, height: bounds.height).fill()
+        }
     }
 }
 
-final class TabSelectButton: NSButton {
+/// A click remains a button click; a drag anywhere on its label moves the window.
+class DraggableChromeButton: NSButton {
+    private let drag = ChromeWindowDrag()
+    private var isPressed = false
+    override func mouseDown(with event: NSEvent) {
+        isPressed = true
+        drag.begin(event, in: window)
+        highlight(true)
+    }
+    override func mouseDragged(with event: NSEvent) {
+        drag.update(event, in: window)
+        if drag.didMove { highlight(false) }
+    }
+    override func mouseUp(with event: NSEvent) {
+        highlight(false)
+        let clicked = isPressed && !drag.didMove
+        isPressed = false
+        drag.end()
+        if clicked, bounds.contains(convert(event.locationInWindow, from: nil)), let action {
+            sendAction(action, to: target)
+        }
+    }
+}
+
+final class TabSelectButton: DraggableChromeButton {
     var onRightClick: ((NSEvent) -> Void)?
     override func draw(_ dirtyRect: NSRect) { /* Chrome is drawn once by the parent. */ }
     override func rightMouseDown(with event: NSEvent) { onRightClick?(event) }
@@ -86,14 +142,10 @@ final class TabButton: NSView {
     override func mouseEntered(with event: NSEvent) { hovering = true; needsDisplay = true; needsLayout = true }
     override func mouseExited(with event: NSEvent) { hovering = false; needsDisplay = true; needsLayout = true }
     override func draw(_ dirtyRect: NSRect) {
-        NSColor(calibratedWhite: 1, alpha: active ? 0.08 : hovering ? 0.035 : 0).setFill()
+        NSColor.black.withAlphaComponent(active ? 0 : hovering ? 0.14 : 0.20).setFill()
         bounds.fill()
         Theme.divider.setFill()
         NSRect(x: bounds.width - 1, y: 0, width: 1, height: bounds.height).fill()
-        if active {
-            NSColor(calibratedWhite: 1, alpha: 0.25).setFill()
-            NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
-        }
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .center
         paragraph.lineBreakMode = .byTruncatingMiddle
@@ -123,6 +175,7 @@ final class TabButton: NSView {
 final class EditorPane {
     let scroll: NSScrollView
     let textView: NSTextView
+    let lineNumbers: LineNumberRuler
     let undo = UndoManager()
     var dirty = false
 
@@ -130,12 +183,15 @@ final class EditorPane {
         scroll = NSScrollView(frame: .zero)
         scroll.drawsBackground = false
         scroll.automaticallyAdjustsContentInsets = false
+        scroll.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+        scroll.contentView.automaticallyAdjustsContentInsets = true
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = false
         scroll.autohidesScrollers = true
         scroll.scrollerStyle = .overlay
         // A separate text system per open tab preserves its own selection and undo history.
         textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        lineNumbers = LineNumberRuler(scrollView: scroll, textView: textView)
         textView.isRichText = false
         textView.importsGraphics = false
         textView.allowsUndo = true
@@ -170,6 +226,22 @@ final class EditorPane {
         let length = min(record.selectionLength, (text as NSString).length - location)
         textView.setSelectedRange(NSRange(location: max(0, location), length: max(0, length)))
         scroll.documentView = textView
+        scroll.verticalRulerView = lineNumbers
+        scroll.hasVerticalRuler = true
+        scroll.rulersVisible = true
+        lineNumbers.refreshMetrics()
+        lineNumbers.onThicknessChange = { [weak self] in
+            DispatchQueue.main.async { [weak self] in self?.layoutEditor() }
+        }
+    }
+    func layoutEditor() {
+        scroll.tile()
+        // Overlay-style rulers reserve NSClipView insets rather than shrinking its frame.
+        let insets = scroll.contentView.contentInsets
+        let width = max(0, scroll.contentSize.width - insets.left - insets.right)
+        textView.setFrameSize(NSSize(width: width, height: max(textView.frame.height, scroll.contentSize.height)))
+        scroll.contentView.scroll(to: NSPoint(x: -insets.left, y: scroll.contentView.bounds.minY))
+        scroll.reflectScrolledClipView(scroll.contentView)
     }
     func applyFont(size: CGFloat) {
         textView.font = Theme.font(size)
@@ -182,5 +254,6 @@ final class EditorPane {
         if let storage = textView.textStorage, storage.length > 0 {
             storage.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: storage.length))
         }
+        lineNumbers.refreshMetrics()
     }
 }

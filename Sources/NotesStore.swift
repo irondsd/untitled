@@ -48,8 +48,13 @@ final class NotesStore {
         notesDirectory = root.appendingPathComponent("notes", isDirectory: true)
         try FileManager.default.createDirectory(at: notesDirectory, withIntermediateDirectories: true)
         let files = try FileManager.default.contentsOfDirectory(at: notesDirectory, includingPropertiesForKeys: nil)
+        // A deletion marker prevents an interrupted delete from resurrecting text as an orphan.
+        let deleted = Set(files.filter { $0.pathExtension == "deleted" }.compactMap {
+            UUID(uuidString: $0.deletingPathExtension().lastPathComponent)
+        })
+        for id in deleted { try removeLocalFiles(id) }
         for file in files where file.pathExtension == "txt" {
-            guard let id = UUID(uuidString: file.deletingPathExtension().lastPathComponent) else { continue }
+            guard let id = UUID(uuidString: file.deletingPathExtension().lastPathComponent), !deleted.contains(id) else { continue }
             let metadata = metadataURL(id)
             if let data = try? Data(contentsOf: metadata),
                var record = try? decoder.decode(NoteRecord.self, from: data) {
@@ -152,8 +157,11 @@ final class NotesStore {
 
     func archive(_ id: UUID) throws {
         guard var record = records[id], let index = session.openIDs.firstIndex(of: id) else { return }
+        let body = try text(id)
+        let retain = record.title != nil || record.filePath != nil ||
+            !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         record.archivedAt = Date()
-        try writeRecord(record)
+        if retain { try writeRecord(record) }
         var next = session
         next.openIDs.remove(at: index)
         if next.selectedID == id {
@@ -161,9 +169,31 @@ final class NotesStore {
         }
         // The session write commits the transition; rollback memory if that write fails.
         try encoder.encode(next).write(to: sessionURL, options: .atomic)
-        records[id] = record
         session = next
+        if retain { records[id] = record }
+        else {
+            try removeLocalFiles(id)
+            records.removeValue(forKey: id)
+        }
         if session.openIDs.isEmpty { _ = try create() }
+    }
+
+    func deleteArchived(_ id: UUID) throws {
+        guard records[id] != nil else { return }
+        guard !session.openIDs.contains(id) else {
+            throw NSError(domain: "untitled", code: 2, userInfo: [NSLocalizedDescriptionKey: "Close this note before deleting it."])
+        }
+        try removeLocalFiles(id)
+        records.removeValue(forKey: id)
+    }
+
+    private func removeLocalFiles(_ id: UUID) throws {
+        let marker = notesDirectory.appendingPathComponent("\(id.uuidString).deleted")
+        try Data().write(to: marker, options: .atomic)
+        for url in [textURL(id), metadataURL(id)] where FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
+        try FileManager.default.removeItem(at: marker)
     }
 
     func restore(_ id: UUID) throws {

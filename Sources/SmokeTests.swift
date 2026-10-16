@@ -16,6 +16,11 @@ extension AppDelegate {
                 pane.textView.insertText("First note — preserved 📝\nsecond line", replacementRange: pane.textView.selectedRange())
                 try flush()
                 try check(try store.text(first) == pane.textView.string, "native typing persisted")
+                try check(pane.lineNumbers.lines.starts.count == 2, "native edits update logical line numbers")
+                pane.layoutEditor()
+                let textEdge = pane.scroll.convert(NSPoint(x: 0, y: 0), from: pane.textView).x
+                try check(textEdge >= pane.lineNumbers.frame.maxX,
+                    "line-number gutter reserves space beside editable text")
                 let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
                     timestamp: 0, windowNumber: window.windowNumber, context: nil,
                     characters: "t", charactersIgnoringModifiers: "t", isARepeat: false, keyCode: 17)!
@@ -42,6 +47,7 @@ extension AppDelegate {
                 try check(pane.textView.undoManager?.canUndo == true, "undo history survives tab switch")
                 pane.textView.undoManager?.undo()
                 try check(pane.textView.string.isEmpty, "undo affects only the selected tab")
+                try check(pane.lineNumbers.lines.starts == [0], "line numbers update after undo")
                 try check(secondPane.textView.string == "Second note", "other tab remains intact")
                 pane.textView.undoManager?.redo()
                 try flush()
@@ -76,6 +82,75 @@ extension AppDelegate {
                     characters: "s", charactersIgnoringModifiers: "s", isARepeat: false, keyCode: 1)!
                 try check(NSApp.mainMenu!.performKeyEquivalent(with: saveEvent), "Command-S handled by menu")
                 try check(try String(contentsOf: fileURL, encoding: .utf8) == "Changed Original file", "explicit save writes external file")
+                let wrappedText = String(repeating: "a long wrapped line ", count: 60) + "\nshort\n"
+                let wrappingPane = EditorPane(text: wrappedText, fontSize: 14, record: store.records[fileID]!)
+                wrappingPane.scroll.frame = NSRect(x: 0, y: 0, width: 280, height: 300)
+                wrappingPane.layoutEditor()
+                let manager = wrappingPane.textView.layoutManager!
+                manager.ensureLayout(for: wrappingPane.textView.textContainer!)
+                let firstFragment = manager.lineFragmentRect(forGlyphAt: 0, effectiveRange: nil)
+                let nextGlyph = manager.glyphIndexForCharacter(at: wrappingPane.lineNumbers.lines.starts[1])
+                let nextFragment = manager.lineFragmentRect(forGlyphAt: nextGlyph, effectiveRange: nil)
+                try check(nextFragment.minY > firstFragment.height * 2, "long logical line wraps into multiple visual rows")
+                try check(wrappingPane.lineNumbers.lines.starts.count == 3, "wrapped rows do not add logical line numbers")
+                wrappingPane.applyFont(size: 18)
+                try check(wrappingPane.lineNumbers.lines.starts.count == 3, "font changes preserve logical numbering")
+                let archivedCount = store.archived.count
+                newTab(nil)
+                let emptyID = currentID!
+                try close(emptyID)
+                try check(store.records[emptyID] == nil && store.archived.count == archivedCount, "closing a blank native tab skips the archive")
+                newTab(nil)
+                let namedEmpty = currentID!
+                try store.rename(namedEmpty, title: "Named empty note")
+                try close(namedEmpty)
+                try check(store.archived.contains { $0.id == namedEmpty }, "closing a renamed empty tab archives it")
+                try store.deleteArchived(namedEmpty)
+                try check(store.records[namedEmpty] == nil && !FileManager.default.fileExists(atPath: store.textURL(namedEmpty).path), "explicit archive deletion removes local note files")
+                let originalOrigin = window.frame.origin
+                let drag = ChromeWindowDrag()
+                let down = NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 100, y: 100),
+                    modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                    eventNumber: 1, clickCount: 1, pressure: 1)!
+                drag.begin(down, in: window)
+                let slight = NSEvent.mouseEvent(with: .leftMouseDragged, location: NSPoint(x: 101, y: 100),
+                    modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                    eventNumber: 2, clickCount: 1, pressure: 1)!
+                drag.update(slight, in: window)
+                try check(!drag.didMove && window.frame.origin == originalOrigin, "small pointer motion remains a click")
+                let moved = NSEvent.mouseEvent(with: .leftMouseDragged, location: NSPoint(x: 140, y: 80),
+                    modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                    eventNumber: 3, clickCount: 1, pressure: 1)!
+                drag.update(moved, in: window)
+                try check(drag.didMove && window.frame.origin == NSPoint(x: originalOrigin.x + 40, y: originalOrigin.y - 20),
+                    "title-row dragging moves the native window")
+                drag.end()
+                try check(!drag.didMove, "drag state resets on release")
+                window.setFrameOrigin(originalOrigin)
+                let baselinePane = EditorPane(text: "First\n\nThird\n", fontSize: 14, record: store.records[fileID]!)
+                baselinePane.scroll.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+                baselinePane.layoutEditor()
+                let baselineManager = baselinePane.textView.layoutManager!
+                let baselineContainer = baselinePane.textView.textContainer!
+                baselineManager.ensureLayout(for: baselineContainer)
+                let emptyBaseline = baselinePane.lineNumbers.baseline(for: 1)!
+                let followingBaseline = baselinePane.lineNumbers.baseline(for: 2)!
+                baselinePane.textView.insertText("f", replacementRange: NSRange(location: 6, length: 0))
+                baselineManager.ensureLayout(for: baselineContainer)
+                try check(abs(baselinePane.lineNumbers.baseline(for: 1)! - emptyBaseline) < 0.01,
+                    "typing one character on an empty line does not move its number")
+                try check(abs(baselinePane.lineNumbers.baseline(for: 2)! - followingBaseline) < 0.01,
+                    "typing on an empty line does not move subsequent line numbers")
+                baselinePane.textView.insertText("", replacementRange: NSRange(location: 6, length: 1))
+                baselineManager.ensureLayout(for: baselineContainer)
+                try check(abs(baselinePane.lineNumbers.baseline(for: 1)! - emptyBaseline) < 0.01,
+                    "deleting the final character preserves the line-number baseline")
+                let finalLineBaseline = baselinePane.lineNumbers.baseline(for: 3)!
+                let end = (baselinePane.textView.string as NSString).length
+                baselinePane.textView.insertText("x", replacementRange: NSRange(location: end, length: 0))
+                baselineManager.ensureLayout(for: baselineContainer)
+                try check(abs(baselinePane.lineNumbers.baseline(for: 3)! - finalLineBaseline) < 0.01,
+                    "typing on the final empty line preserves its number baseline")
                 try flush()
                 let report: [String: Any] = ["passed": true, "checks": checks]
                 let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])

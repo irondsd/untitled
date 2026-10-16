@@ -9,7 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     private let header = HeaderView()
     private let tabScroll = NSScrollView()
     private let tabDocument = NSView()
-    private let titleButton = NSButton()
+    private let titleButton = DraggableChromeButton()
     private let plusButton = NSButton()
     private let tint = NSView()
     private var tabs: [TabButton] = []
@@ -45,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
                 window.makeKeyAndOrderFront(nil)
                 NSApp.activate(ignoringOtherApps: true)
             }
+            reportTestGeometry()
             if args.contains("--smoke-test") { runSmokeTests() }
         } catch {
             showError(error)
@@ -78,7 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         tint.layer?.backgroundColor = NSColor.black.withAlphaComponent(opacity).cgColor
         root.addSubview(tint)
         header.wantsLayer = true
-        header.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.20).cgColor
+        header.layer?.backgroundColor = NSColor.clear.cgColor
         root.addSubview(header)
         tabScroll.drawsBackground = false
         tabScroll.automaticallyAdjustsContentInsets = false
@@ -93,10 +94,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         titleButton.lineBreakMode = .byTruncatingMiddle
         titleButton.target = self
         titleButton.action = #selector(renameCurrent)
-        titleButton.toolTip = "Rename note (⇧⌘R)"
+        titleButton.toolTip = "Drag to move · click to rename (⇧⌘R)"
         header.addSubview(titleButton)
         plusButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "New tab")
         plusButton.isBordered = false
+        plusButton.wantsLayer = true
+        plusButton.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.20).cgColor
         plusButton.contentTintColor = Theme.secondary
         plusButton.target = self
         plusButton.action = #selector(newTab)
@@ -105,7 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         header.addSubview(plusButton)
         root.onLayout = { [weak self] in self?.layoutWindow() }
         window.center()
-        if !CommandLine.arguments.contains("--smoke-test") { window.setFrameAutosaveName("EditorWindow") }
+        if !isSmokeTesting && !CommandLine.arguments.contains("--ui-test") { window.setFrameAutosaveName("EditorWindow") }
         rebuildTabs()
         layoutWindow()
     }
@@ -126,7 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         }
         if let currentID, let pane = editors[currentID] {
             pane.scroll.frame = NSRect(x: 0, y: headerHeight, width: root.bounds.width, height: max(0, root.bounds.height - headerHeight))
-            pane.textView.setFrameSize(NSSize(width: pane.scroll.contentSize.width, height: max(pane.textView.frame.height, pane.scroll.contentSize.height)))
+            pane.layoutEditor()
         }
         // Keep native traffic lights in the same compact row as the custom tabs.
         for (index, kind) in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].enumerated() {
@@ -149,6 +152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             tabs.append(tab)
         }
         let multiple = tabs.count > 1
+        header.leadingIsInactive = multiple && store.session.openIDs.first != store.session.selectedID
         tabScroll.isHidden = !multiple
         plusButton.isHidden = !multiple
         titleButton.isHidden = multiple
@@ -177,7 +181,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         let pane = editors[id]!
         root.addSubview(pane.scroll, positioned: .below, relativeTo: header)
         layoutWindow()
-        pane.scroll.contentView.scroll(to: NSPoint(x: 0, y: record.scrollOffset))
+        pane.scroll.contentView.scroll(to: NSPoint(x: -pane.scroll.contentView.contentInsets.left, y: record.scrollOffset))
         pane.scroll.reflectScrolledClipView(pane.scroll.contentView)
         rebuildTabs()
         window.makeFirstResponder(pane.textView)
@@ -310,7 +314,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             try flush()
             let controller = ArchiveController(store: store, allNotes: all, onRestore: { [weak self] id in
                 self?.perform { try self?.restore(id) }
-            }, onError: { [weak self] error in self?.showError(error) })
+            }, onError: { [weak self] error in self?.showError(error) }, onDeleted: { [weak self] in
+                self?.archiveController?.reload()
+                self?.searchController?.reload()
+            })
             if all { searchController?.close(); searchController = controller }
             else { archiveController?.close(); archiveController = controller }
             controller.showWindow(nil)
@@ -391,8 +398,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     }
     @objc private func showAbout(_ sender: Any?) {
         NSApp.orderFrontStandardAboutPanel(options: [
-            .applicationName: "untitled", .applicationVersion: "0.1.0",
-            .credits: NSAttributedString(string: "A quiet place for things you want to keep.\nNative macOS. Local notes. Nothing discarded.")
+            .applicationName: "untitled", .applicationVersion: "0.1.1",
+            .credits: NSAttributedString(string: "A quiet place for things you want to keep.\nNative macOS. Notes stay on this Mac.")
         ])
     }
 
@@ -494,6 +501,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         catch { showError(error); return false }
     }
     func windowDidResize(_ notification: Notification) { layoutWindow() }
+    func windowDidMove(_ notification: Notification) { reportTestGeometry() }
+    private func reportTestGeometry() {
+        guard CommandLine.arguments.contains("--ui-test"), let window, let store else { return }
+        let frame = window.frame
+        var values: [String: Any] = ["x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height]
+        if let id = currentID, let pane = editors[id] {
+            values["scroll"] = NSStringFromRect(pane.scroll.frame)
+            values["clip"] = NSStringFromRect(pane.scroll.contentView.frame)
+            values["clipBounds"] = NSStringFromRect(pane.scroll.contentView.bounds)
+            values["text"] = NSStringFromRect(pane.textView.frame)
+            values["textInRoot"] = NSStringFromRect(root.convert(pane.textView.bounds, from: pane.textView))
+            values["ruler"] = NSStringFromRect(pane.lineNumbers.frame)
+            values["scrollSubviews"] = pane.scroll.subviews.map { "\(type(of: $0)): \($0.frame)" }
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: values, options: [.sortedKeys]) {
+            try? data.write(to: store.root.appendingPathComponent("window-frame.json"), options: .atomic)
+        }
+    }
     func windowDidBecomeKey(_ notification: Notification) { layoutWindow() }
     func applicationWillResignActive(_ notification: Notification) { perform { try flush() } }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -515,7 +540,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "untitled couldn’t complete that action"
-        alert.informativeText = "\(error.localizedDescription)\n\nYour note files have not been deleted."
+        alert.informativeText = error.localizedDescription
         alert.addButton(withTitle: "OK")
         if let window, window.attachedSheet == nil { alert.beginSheetModal(for: window) }
         else { alert.runModal() }
@@ -525,6 +550,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
 @main
 struct UntitledMain {
     @MainActor static func main() {
+        let args = CommandLine.arguments
+        if (args.contains("--smoke-test") || args.contains("--ui-test")) && !args.contains("--data-dir") {
+            fputs("Test modes require an isolated --data-dir.\n", stderr)
+            exit(2)
+        }
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
         let delegate = AppDelegate()

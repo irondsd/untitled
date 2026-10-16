@@ -11,12 +11,19 @@ final class ArchiveRowView: NSTableRowView {
     }
 }
 
+final class ArchiveCell: NSTableCellView {
+    var noteID: UUID?
+    var onDelete: ((UUID) -> Void)?
+    @objc func deleteNote(_ sender: Any?) { if let noteID { onDelete?(noteID) } }
+}
+
 @MainActor
 final class ArchiveController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
     private let store: NotesStore
     private let allNotes: Bool
     private let onRestore: (UUID) -> Void
     private let onError: (Error) -> Void
+    private let onDeleted: () -> Void
     private let search = NSSearchField()
     private let table = NSTableView()
     private let preview = NSTextView()
@@ -26,11 +33,13 @@ final class ArchiveController: NSWindowController, NSTableViewDataSource, NSTabl
     private var generation = 0
     private var searchWork: DispatchWorkItem?
 
-    init(store: NotesStore, allNotes: Bool, onRestore: @escaping (UUID) -> Void, onError: @escaping (Error) -> Void) {
+    init(store: NotesStore, allNotes: Bool, onRestore: @escaping (UUID) -> Void,
+         onError: @escaping (Error) -> Void, onDeleted: @escaping () -> Void = {}) {
         self.store = store
         self.allNotes = allNotes
         self.onRestore = onRestore
         self.onError = onError
+        self.onDeleted = onDeleted
         let window = ArchiveWindow(contentRect: NSRect(x: 0, y: 0, width: 850, height: 530),
             styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         window.title = allNotes ? "Search Notes" : "Archive"
@@ -164,8 +173,10 @@ final class ArchiveController: NSWindowController, NSTableViewDataSource, NSTabl
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? { ArchiveRowView() }
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let cell = NSTableCellView()
+        let cell = ArchiveCell()
         let record = rows[row]
+        cell.noteID = record.id
+        cell.onDelete = { [weak self] id in self?.confirmDelete(id) }
         let title = NSTextField(labelWithString: record.displayTitle)
         title.font = .systemFont(ofSize: 13, weight: .medium)
         title.lineBreakMode = .byTruncatingMiddle
@@ -174,19 +185,52 @@ final class ArchiveController: NSWindowController, NSTableViewDataSource, NSTabl
         subtitle.font = .systemFont(ofSize: 11)
         subtitle.textColor = .secondaryLabelColor
         subtitle.lineBreakMode = .byTruncatingTail
-        cell.addSubview(title); cell.addSubview(subtitle)
+        let delete = NSButton(image: NSImage(systemSymbolName: "trash", accessibilityDescription: "Delete note")!,
+            target: cell, action: #selector(ArchiveCell.deleteNote(_:)))
+        delete.isBordered = false
+        delete.contentTintColor = Theme.secondary
+        delete.toolTip = "Delete note entirely"
+        delete.setAccessibilityLabel("Delete \(record.displayTitle)")
+        delete.isHidden = store.session.openIDs.contains(record.id)
+        cell.addSubview(title); cell.addSubview(subtitle); cell.addSubview(delete)
         title.translatesAutoresizingMaskIntoConstraints = false
         subtitle.translatesAutoresizingMaskIntoConstraints = false
+        delete.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             title.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 10),
-            title.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -10),
+            title.trailingAnchor.constraint(equalTo: delete.leadingAnchor, constant: -6),
             title.topAnchor.constraint(equalTo: cell.topAnchor, constant: 10),
             subtitle.leadingAnchor.constraint(equalTo: title.leadingAnchor),
             subtitle.trailingAnchor.constraint(equalTo: title.trailingAnchor),
-            subtitle.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 4)
+            subtitle.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 4),
+            delete.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -10),
+            delete.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            delete.widthAnchor.constraint(equalToConstant: 26),
+            delete.heightAnchor.constraint(equalToConstant: 26)
         ])
         cell.textField = title
         return cell
+    }
+    private func confirmDelete(_ id: UUID) {
+        guard let record = store.records[id], !store.session.openIDs.contains(id), let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Delete “\(record.displayTitle)”?"
+        alert.informativeText = "This permanently removes the note from untitled. It cannot be undone." +
+            (record.filePath == nil ? "" : "\n\nThe original file on disk will stay untouched.")
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Delete Note")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertSecondButtonReturn, let self else { return }
+            do {
+                try self.store.deleteArchived(id)
+                self.reload()
+                self.onDeleted()
+            } catch {
+                self.reload()
+                self.onError(error)
+            }
+        }
     }
     func tableViewSelectionDidChange(_ notification: Notification) { updatePreview() }
     private func updatePreview() {
