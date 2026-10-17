@@ -541,6 +541,183 @@ extension AppDelegate {
                 try flush()
                 try check(try store.text(currentID!) == multiView.string, "multi-selection edits persist through normal autosave storage")
                 try flush()
+                // Syntax is a visual overlay over the same native plain-text and undo system.
+                newTab(nil)
+                let syntaxID = currentID!, syntaxPane = editors[currentID!]!, syntaxView = editors[currentID!]!.textView
+                @MainActor func waitForSyntax(_ target: EditorPane) async throws {
+                    let deadline = Date().addingTimeInterval(5)
+                    while target.syntax.isHighlighting && Date() < deadline {
+                        try await Task.sleep(nanoseconds: 10_000_000)
+                    }
+                    try check(!target.syntax.isHighlighting, "automatic syntax detection finishes")
+                }
+                let yamlPaste = "# Deployment\nservice: api\nenabled: true\nreplicas: 3\n"
+                do {
+                    let savedItems = clipboard.pasteboardItems?.map { item -> NSPasteboardItem in
+                        let copy = NSPasteboardItem()
+                        for type in item.types { if let data = item.data(forType: type) { copy.setData(data, forType: type) } }
+                        return copy
+                    } ?? []
+                    defer { clipboard.clearContents(); if !savedItems.isEmpty { clipboard.writeObjects(savedItems) } }
+                    clipboard.clearContents()
+                    clipboard.setString(yamlPaste, forType: .string)
+                    syntaxView.paste(nil)
+                    try await waitForSyntax(syntaxPane)
+                    try check(syntaxPane.syntax.language == .yaml && syntaxView.string == yamlPaste, "native paste automatically detects YAML without changing source")
+                    syntaxView.selectAll(nil)
+                    syntaxView.copy(nil)
+                    try check(clipboard.string(forType: .string) == yamlPaste, "copying highlighted text preserves plain source")
+                }
+                let keyOffset = (yamlPaste as NSString).range(of: "service").location
+                @MainActor func syntaxColor(_ offset: Int) -> NSColor? {
+                    syntaxView.layoutManager?.temporaryAttribute(.foregroundColor, atCharacterIndex: offset, effectiveRange: nil) as? NSColor
+                }
+                try check(syntaxColor(keyOffset) != nil && syntaxColor(keyOffset) != syntaxView.textColor, "YAML keys receive temporary foreground colors")
+                try check(syntaxView.textStorage?.attribute(.foregroundColor, at: keyOffset, effectiveRange: nil) as? NSColor == syntaxView.textColor,
+                    "syntax colors never enter stored text attributes")
+                try flush()
+                syntaxView.setSelectedRange(NSRange(location: keyOffset, length: 7))
+                let syntaxSelection = syntaxView.selectedRange()
+                let previousColor = syntaxColor(keyOffset)
+                syntaxPane.applyAppearance(brightness: 0.9, showsLineNumbers: true)
+                syntaxPane.applyFont(size: 16)
+                try check(syntaxColor(keyOffset) != nil && syntaxColor(keyOffset) != previousColor,
+                    "syntax palette follows brightness and survives font changes")
+                try check(!syntaxPane.dirty && syntaxView.selectedRange() == syntaxSelection && syntaxView.string == yamlPaste,
+                    "syntax appearance preserves selection and does not dirty notes")
+                try check(syntaxView.typingAttributes[.foregroundColor] as? NSColor == syntaxView.textColor,
+                    "typing attributes retain the plain foreground color")
+                showFind()
+                try await search("service")
+                try check(syntaxColor(keyOffset) != nil && syntaxView.layoutManager?.temporaryAttribute(.backgroundColor, atCharacterIndex: keyOffset, effectiveRange: nil) != nil,
+                    "find highlights coexist with syntax colors")
+                syntaxView.cancelOperation(nil)
+                try check(syntaxColor(keyOffset) != nil && syntaxView.layoutManager?.temporaryAttribute(.backgroundColor, atCharacterIndex: keyOffset, effectiveRange: nil) == nil,
+                    "closing Find preserves syntax colors")
+                syntaxView.setSelectedRange(NSRange(location: 0, length: 0))
+                try switchTab(occurrenceID)
+                try switchTab(syntaxID)
+                try check(editors[syntaxID] === syntaxPane && syntaxColor(keyOffset) != nil,
+                    "tab switching retains syntax, editor and native undo manager")
+                syntaxView.undoManager?.undo()
+                try await waitForSyntax(syntaxPane)
+                try check(syntaxView.string.isEmpty && syntaxPane.syntax.language == .plain,
+                    "highlighting does not add undo actions after paste")
+                syntaxView.undoManager?.redo()
+                try await waitForSyntax(syntaxPane)
+                try check(syntaxView.string == yamlPaste && syntaxPane.syntax.language == .yaml,
+                    "redo re-detects and highlights pasted YAML")
+                // Programmatic test edits can share an AppKit event undo group. Paste undo/redo
+                // is already checked; isolate this next native typing action from that fixture.
+                syntaxView.undoManager?.removeAllActions()
+                syntaxView.setSelectedRange(NSRange(location: (syntaxView.string as NSString).length, length: 0))
+                syntaxView.breakUndoCoalescing()
+                syntaxView.insertText("\n# trailing comment", replacementRange: NSRange(location: (syntaxView.string as NSString).length, length: 0))
+                try check(syntaxPane.syntax.isHighlighting && syntaxColor(keyOffset) != nil,
+                    "existing syntax stays visible while an edit is being analyzed")
+                try await waitForSyntax(syntaxPane)
+                syntaxView.undoManager?.undo()
+                try await waitForSyntax(syntaxPane)
+                try check(syntaxView.string == yamlPaste, "syntax refresh leaves native typing undo intact")
+                let markdownPaste = "# Plan 📝\n\n- Ship **today**\n\nUse `code` and [docs](https://example.test).\n"
+                syntaxView.breakUndoCoalescing()
+                syntaxView.insertText(markdownPaste, replacementRange: NSRange(location: 0, length: (syntaxView.string as NSString).length))
+                try await waitForSyntax(syntaxPane)
+                try check(syntaxPane.syntax.language == .markdown && syntaxColor(0) != nil,
+                    "replacing YAML with Markdown automatically switches syntax")
+                syntaxView.insertText("enabled: true", replacementRange: NSRange(location: 0, length: (syntaxView.string as NSString).length))
+                syntaxView.insertText("A plain note", replacementRange: NSRange(location: 0, length: (syntaxView.string as NSString).length))
+                try await waitForSyntax(syntaxPane)
+                try check(syntaxPane.syntax.language == .plain && syntaxColor(0) == nil,
+                    "rapid format changes discard stale syntax jobs and clear colors")
+                syntaxView.insertText(markdownPaste, replacementRange: NSRange(location: 0, length: (syntaxView.string as NSString).length))
+                try await waitForSyntax(syntaxPane)
+                try flush()
+                try check(try store.text(syntaxID) == markdownPaste, "highlighted notes persist as exact UTF-8 source")
+                try close(syntaxID)
+                try restore(syntaxID)
+                let restoredSyntaxPane = editors[syntaxID]!
+                try await waitForSyntax(restoredSyntaxPane)
+                try check(restoredSyntaxPane.syntax.language == .markdown && restoredSyntaxPane.textView.string == markdownPaste,
+                    "restored notes detect syntax from their plain-text content")
+                newTab(nil)
+                let scriptID = currentID!, scriptPane = editors[currentID!]!, scriptView = editors[currentID!]!.textView
+                let typeScriptPaste = "interface User { name: string; }\nconst greet = (user: User): string => `Hello ${user.name}`;\n"
+                do {
+                    let savedItems = clipboard.pasteboardItems?.map { item -> NSPasteboardItem in
+                        let copy = NSPasteboardItem()
+                        for type in item.types { if let data = item.data(forType: type) { copy.setData(data, forType: type) } }
+                        return copy
+                    } ?? []
+                    defer { clipboard.clearContents(); if !savedItems.isEmpty { clipboard.writeObjects(savedItems) } }
+                    clipboard.clearContents()
+                    clipboard.setString(typeScriptPaste, forType: .string)
+                    scriptView.paste(nil)
+                    try await waitForSyntax(scriptPane)
+                    try check(scriptPane.syntax.language == .javascript && scriptView.string == typeScriptPaste,
+                        "pasting TypeScript automatically selects the shared JS/TS format")
+                    scriptView.selectAll(nil)
+                    scriptView.copy(nil)
+                    try check(clipboard.string(forType: .string) == typeScriptPaste, "copying TypeScript retains source including template interpolation")
+                }
+                @MainActor func scriptColor(_ needle: String) -> NSColor? {
+                    let offset = (scriptView.string as NSString).range(of: needle).location
+                    return scriptView.layoutManager?.temporaryAttribute(.foregroundColor, atCharacterIndex: offset, effectiveRange: nil) as? NSColor
+                }
+                let keywordColor = scriptColor("interface"), typeColor = scriptColor("User"), stringColor = scriptColor("Hello")
+                try check(keywordColor != nil && typeColor != nil && stringColor != nil
+                    && keywordColor != typeColor && stringColor != typeColor, "TypeScript keywords, types and template strings have distinct colors")
+                let expressionOffset = (typeScriptPaste as NSString).range(of: "user.name").location
+                try check(scriptView.layoutManager?.temporaryAttribute(.foregroundColor, atCharacterIndex: expressionOffset, effectiveRange: nil) == nil,
+                    "template expressions retain code colors instead of inheriting the surrounding string")
+                try flush()
+                scriptView.setSelectedRange(NSRange(location: 0, length: 9))
+                let scriptSelection = scriptView.selectedRange()
+                scriptPane.applyAppearance(brightness: 0.82, showsLineNumbers: true)
+                scriptPane.applyFont(size: 15)
+                try check(scriptColor("interface") != nil && scriptColor("interface") != keywordColor
+                    && scriptView.selectedRange() == scriptSelection && !scriptPane.dirty,
+                    "JS/TS appearance changes preserve selection and autosave state")
+                showFind()
+                try await search("User")
+                let typeOffset = (typeScriptPaste as NSString).range(of: "User").location
+                try check(scriptColor("User") != nil && scriptView.layoutManager?.temporaryAttribute(.backgroundColor, atCharacterIndex: typeOffset, effectiveRange: nil) != nil,
+                    "Find and TypeScript token colors coexist")
+                scriptView.cancelOperation(nil)
+                try switchTab(syntaxID)
+                try switchTab(scriptID)
+                try check(editors[scriptID] === scriptPane && scriptColor("interface") != nil,
+                    "JS/TS tab switching retains its native editor and colors")
+                scriptView.undoManager?.undo()
+                try await waitForSyntax(scriptPane)
+                try check(scriptView.string.isEmpty && scriptPane.syntax.language == .plain,
+                    "one native undo removes TypeScript paste without formatting undo actions")
+                scriptView.undoManager?.redo()
+                try await waitForSyntax(scriptPane)
+                try check(scriptView.string == typeScriptPaste && scriptPane.syntax.language == .javascript,
+                    "native redo restores TypeScript source and syntax")
+                let javaScriptPaste = "const enabled = true;\nconsole.log(`ready: ${enabled}`, /ready/gi);\n"
+                scriptView.setSelectedRange(NSRange(location: 0, length: (scriptView.string as NSString).length))
+                scriptView.insertText(javaScriptPaste, replacementRange: scriptView.selectedRange())
+                try await waitForSyntax(scriptPane)
+                try check(scriptPane.syntax.language == .javascript && scriptColor("const") != nil
+                    && scriptColor("log") != nil, "JavaScript uses the same format and colors declarations and function calls")
+                scriptView.insertText("name: api\nenabled: true", replacementRange: NSRange(location: 0, length: (scriptView.string as NSString).length))
+                try await waitForSyntax(scriptPane)
+                try check(scriptPane.syntax.language == .yaml, "replacing JavaScript with YAML automatically changes format")
+                scriptView.insertText(javaScriptPaste, replacementRange: NSRange(location: 0, length: (scriptView.string as NSString).length))
+                scriptView.insertText("An ordinary note", replacementRange: NSRange(location: 0, length: (scriptView.string as NSString).length))
+                try await waitForSyntax(scriptPane)
+                try check(scriptPane.syntax.language == .plain && scriptView.layoutManager?.temporaryAttribute(.foregroundColor, atCharacterIndex: 0, effectiveRange: nil) == nil,
+                    "obsolete JS/TS detection cannot recolor a newer plain note")
+                scriptView.insertText(javaScriptPaste, replacementRange: NSRange(location: 0, length: (scriptView.string as NSString).length))
+                try await waitForSyntax(scriptPane)
+                try flush()
+                try check(try store.text(scriptID) == javaScriptPaste, "JavaScript highlighting persists only exact plain UTF-8 source")
+                try close(scriptID)
+                try restore(scriptID)
+                try await waitForSyntax(editors[scriptID]!)
+                try check(editors[scriptID]!.syntax.language == .javascript, "restored JavaScript notes automatically regain syntax colors")
                 let report: [String: Any] = ["passed": true, "checks": checks]
                 let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
                 try data.write(to: store.root.appendingPathComponent("smoke-results.json"))

@@ -177,6 +177,7 @@ final class EditorPane {
     let textView: NSTextView
     let lineNumbers: LineNumberRuler
     let undo = UndoManager()
+    let syntax: SyntaxHighlighter
     var dirty = false
     private var brightness: Double = 0.93
 
@@ -194,6 +195,7 @@ final class EditorPane {
         // A separate text system per open tab preserves its own selection and undo history.
         textView = EditorTextView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         lineNumbers = LineNumberRuler(scrollView: scroll, textView: textView)
+        syntax = SyntaxHighlighter(editor: textView)
         textView.isRichText = false
         textView.importsGraphics = false
         textView.allowsUndo = true
@@ -223,6 +225,7 @@ final class EditorPane {
         textView.isIncrementalSearchingEnabled = false
         textView.setAccessibilityLabel("Note text")
         textView.string = text
+        syntax.refresh()
         applyFont(size: fontSize)
         let location = min(record.selectionLocation, (text as NSString).length)
         let length = min(record.selectionLength, (text as NSString).length - location)
@@ -263,6 +266,7 @@ final class EditorPane {
     func applyAppearance(brightness: Double, showsLineNumbers: Bool) {
         if self.brightness != brightness {
             self.brightness = brightness
+            syntax.applyAppearance(brightness: brightness)
             let color = NSColor(calibratedWhite: CGFloat(brightness), alpha: 1)
             textView.textColor = color
             textView.insertionPointColor = color
