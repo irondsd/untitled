@@ -12,6 +12,8 @@ Requires macOS 13+ and Apple's Command Line Tools (`xcode-select --install`). A 
 
 The result is `build/untitled.app`. Copy it to Applications if you want; it runs independently of the source directory. The build script signs it locally with an ad hoc signature. This is a personal/local build, not a notarized public release.
 
+To regenerate the existing app icon, run `./make-icon.sh`, then `./build.sh`. The icon script renders the ten standard/Retina sizes from `MakeIcon.swift` and packages them with Apple's `iconutil`. Keep this packaging step: manually placing PNGs in the small ICNS representation slots can produce scrambled icons in Finder and Activity Monitor even when the Dock looks correct.
+
 ## Behavior
 
 - One tab: no tab strip; the note title is centered in the title bar.
@@ -25,7 +27,7 @@ The result is `build/untitled.app`. Copy it to Applications if you want; it runs
 - Automatic saving follows edits after a 0.4-second pause, and runs before tab switches, closing, app deactivation, and quitting. A sudden crash can lose the last unsaved fraction of a second.
 - Open tabs, their order, selected tab, titles, cursor position, and scroll position survive relaunch. Undo history is retained while a tab stays open, but not across app restarts or archiving.
 - Holding ⌘V repeats pasting while the keys remain held. Queued repeat pastes are discarded after releasing V or Command; a single quick paste still works.
-- Selecting text highlights exact repeats in the current note, with Find closed. ⌘D adds the next occurrence to the selection and wraps around; with a caret, the first ⌘D selects the word under it. Matching is literal and case-sensitive, independent of Find settings. Typing, paste, and deletion affect every selected occurrence, with native undo. Esc reduces multiple selections to one; clicking elsewhere clears the preview. Whitespace-only selections do not trigger highlighting.
+- Selecting text highlights exact repeats in the current note, with Find closed. ⌘D adds the next occurrence to the selection and wraps around; with a caret, the first ⌘D selects the word under it. ⇧⌘D selects all occurrences at once, using the word under the caret if nothing is selected. Matching is literal and case-sensitive, independent of Find settings. Typing, paste, and deletion affect every selected occurrence, with native undo. Esc reduces multiple selections to one; clicking elsewhere clears the preview. Whitespace-only selections do not trigger highlighting.
 - Line numbers count real logical lines; soft-wrapped rows share a line number. Word wrapping and a native bottom find/replace panel are included. Syntax highlighting and detection are intentionally not included yet.
 - Settings (⌘,) adjusts background opacity, background black level (50–100%), font brightness, default font size (10.0–36.0 pt in 0.1 pt steps), and line-number visibility. Changes apply immediately to open and new tabs and persist locally. Changing the default size also sets the current size; temporary zoom leaves the default unchanged, and ⌘0 returns to it.
 - View → Background also offers transparency presets, kept in sync with Settings. The window uses native background blur; its appearance respects macOS transparency settings.
@@ -47,6 +49,7 @@ The result is `build/untitled.app`. Copy it to Applications if you want; it runs
 | ⌘S / ⇧⌘S | Save to an external file / Save As |
 | ⌘F / ⌘G / ⇧⌘G | Find / next / previous |
 | ⌘D | Select word / add next occurrence to selection |
+| ⇧⌘D | Select all occurrences of selected text / word under caret |
 | ⌥⌘F | Focus replacement field |
 | Return / ⇧Return in Find | Find next / previous (wraps) |
 | Return in Replace | Replace selected match, then find next; All replaces every match |
@@ -94,6 +97,8 @@ cat "$test_dir/smoke-results.json"
 ```
 
 The UI smoke test exercises real NSTextView typing/undo, Command-T, tab switching, archiving, restoration, session persistence, and find/replace. The find update passes 58 storage/line-index/search checks and 129 native integration checks. Command-F, Return/Shift-Return, capture replacement, focused-input undo/redo, and Escape were also checked in a separately identified preview app using disposable notes. `--data-dir` is only a test/development override.
+
+The selection-occurrence update passes 69 storage/line-index/search checks and 192 native integration checks. It covers exact selection previews, Command-D wraparound, Command-Shift-D selection of all occurrences, queued shortcuts, multiple selection typing, continued caret editing, Unicode deletion, multiline paste, undo/redo, tab retention, and interaction with Find. Selection highlighting and actual keyboard typing/deletion/undo were also verified in a separately identified preview app with disposable notes.
 
 The initial release passed 23 storage checks and 26 native integration checks. Mouse selection, right-click renaming, archive content search/restore, native Find and the single-note title bar were also checked in the running app. On the development Mac (Apple Silicon, macOS 15.4.1), the app bundle measured 0.67 MiB and a performance sample after editing/searching reported a 42.3 MiB physical footprint. These are small-note measurements, not limits or guarantees for large documents.
 

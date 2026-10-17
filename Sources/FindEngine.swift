@@ -37,6 +37,19 @@ struct SelectionMatches {
         }
         return ranges.first { $0.location >= NSMaxRange(range) && available($0) } ?? ranges.first(where: available)
     }
+
+    func all(including selections: [NSRange]) -> [NSRange] {
+        let existing = selections.sorted { $0.location < $1.location }
+        var additions: [NSRange] = []
+        var index = 0
+        for range in ranges {
+            while index < existing.count && NSMaxRange(existing[index]) <= range.location { index += 1 }
+            if index < existing.count && NSIntersectionRange(existing[index], range).length > 0 { continue }
+            if let last = additions.last, NSMaxRange(last) > range.location { continue }
+            additions.append(range)
+        }
+        return (existing + additions).sorted { $0.location < $1.location }
+    }
 }
 
 /// UTF-16 ranges match NSTextView's indexing, including emoji and combining marks.

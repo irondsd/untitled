@@ -420,12 +420,26 @@ extension AppDelegate {
                 try check(occurrenceView.selectedRanges.map(\.rangeValue.location) == [3, 13, 18], "Command-D wraps and retains all earlier selections")
                 selectNextOccurrence()
                 try check(occurrenceView.selectedRanges.count == 3 && !findController.isVisible, "Command-D stops adding when all occurrences are selected")
+                occurrenceView.setSelectedRange(NSRange(location: 13, length: 4))
+                let allOccurrencesItem = findMenu.items.first { $0.keyEquivalent == "d" && $0.keyEquivalentModifierMask == [.command, .shift] }!
+                try check(NSApp.sendAction(allOccurrencesItem.action!, to: allOccurrencesItem.target, from: allOccurrencesItem), "Command-Shift-D menu binding dispatches select all occurrences")
+                try await waitForOccurrences()
+                try check((occurrenceView as! EditorTextView).editingSelectedRanges.map(\.rangeValue.location) == [3, 13, 18] && !findController.isVisible,
+                    "Command-Shift-D selects every exact occurrence without opening Find")
+                selectAllOccurrences()
+                try check((occurrenceView as! EditorTextView).editingSelectedRanges.count == 3 && !occurrencePane.dirty,
+                    "select all occurrences is repeatable and does not alter note contents")
+                occurrenceView.setSelectedRange(NSRange(location: 4, length: 0))
+                selectAllOccurrences()
+                try await waitForOccurrences()
+                try check((occurrenceView as! EditorTextView).editingSelectedRanges.map(\.rangeValue.location) == [3, 13, 18],
+                    "Command-Shift-D from a caret selects its word and every occurrence while matching is pending")
                 occurrenceView.insertText("item", replacementRange: NSRange(location: NSNotFound, length: 0))
                 try await waitForOccurrences()
                 try check(occurrenceView.string == "📝 item ksha item item-long\na.b aXb a.b\n", "native typing replaces every selected occurrence")
                 occurrenceView.undoManager?.undo()
                 try await waitForOccurrences()
-                try check(occurrenceView.string == occurrenceFixture, "one undo restores multi-selection typing; actual: \(String(reflecting: occurrenceView.string))")
+                try check(occurrenceView.string == occurrenceFixture, "one undo restores multi-selection typing")
                 occurrenceView.undoManager?.redo()
                 try await waitForOccurrences()
                 try check(occurrenceView.string == "📝 item ksha item item-long\na.b aXb a.b\n", "redo reapplies multi-selection typing")
@@ -473,7 +487,7 @@ extension AppDelegate {
                 multiView.selectedRanges = [NSValue(range: NSRange(location: 0, length: 2)), NSValue(range: NSRange(location: 5, length: 2))]
                 multiView.insertText("xy", replacementRange: NSRange(location: NSNotFound, length: 0))
                 try await waitForOccurrences()
-                try check(multiView.string == "xy a xy" && multiView.selectedRanges.count == 2, "multi-selection replacement retains both insertion points")
+                try check(multiView.string == "xy a xy" && (multiView as! EditorTextView).editingSelectedRanges.count == 2, "multi-selection replacement retains both insertion points")
                 multiView.insertText("!", replacementRange: NSRange(location: NSNotFound, length: 0))
                 try await waitForOccurrences()
                 try check(multiView.string == "xy! a xy!", "continued typing inserts at every caret")
@@ -489,19 +503,20 @@ extension AppDelegate {
                 try check(multiView.string == "xy a xy", "multi-caret deletion can be redone")
                 multiView.setSelectedRange(NSRange(location: 0, length: (multiView.string as NSString).length))
                 multiView.insertText("🐱 a 🐱", replacementRange: multiView.selectedRange())
-                multiView.selectedRanges = [NSValue(range: NSRange(location: 2, length: 0)), NSValue(range: NSRange(location: 7, length: 0))]
+                multiView.undoManager?.removeAllActions()
+                (multiView as! EditorTextView).setEditingSelectedRanges([NSValue(range: NSRange(location: 2, length: 0)), NSValue(range: NSRange(location: 7, length: 0))])
                 multiView.deleteBackward(nil)
                 try await waitForOccurrences()
                 try check(multiView.string == " a ", "multi-caret Backspace removes whole Unicode characters")
                 multiView.undoManager?.undo()
                 try await waitForOccurrences()
-                multiView.selectedRanges = [NSValue(range: NSRange(location: 0, length: 0)), NSValue(range: NSRange(location: 5, length: 0))]
+                (multiView as! EditorTextView).setEditingSelectedRanges([NSValue(range: NSRange(location: 0, length: 0)), NSValue(range: NSRange(location: 5, length: 0))])
                 multiView.deleteForward(nil)
                 try await waitForOccurrences()
                 try check(multiView.string == " a ", "multi-caret forward delete removes whole Unicode characters")
                 multiView.setSelectedRange(NSRange(location: 0, length: (multiView.string as NSString).length))
                 multiView.insertText("aaaa", replacementRange: multiView.selectedRange())
-                multiView.selectedRanges = [NSValue(range: NSRange(location: 0, length: 2)), NSValue(range: NSRange(location: 2, length: 2))]
+                (multiView as! EditorTextView).setEditingSelectedRanges([NSValue(range: NSRange(location: 0, length: 2)), NSValue(range: NSRange(location: 2, length: 2))])
                 multiView.insertText("b", replacementRange: NSRange(location: NSNotFound, length: 0))
                 try await waitForOccurrences()
                 try check(multiView.string == "bb", "adjacent selections each receive their own replacement")
@@ -516,7 +531,7 @@ extension AppDelegate {
                     defer { clipboard.clearContents(); if !clipboardItems.isEmpty { clipboard.writeObjects(clipboardItems) } }
                     clipboard.clearContents()
                     clipboard.setString("p\nq", forType: .string)
-                    multiView.selectedRanges = [NSValue(range: NSRange(location: 0, length: 1)), NSValue(range: NSRange(location: 1, length: 1))]
+                    (multiView as! EditorTextView).setEditingSelectedRanges([NSValue(range: NSRange(location: 0, length: 1)), NSValue(range: NSRange(location: 1, length: 1))])
                     multiView.paste(nil)
                     try await waitForOccurrences()
                     try check(multiView.string == "p\nqp\nq", "paste inserts multiline text into every selection")

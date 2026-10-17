@@ -12,5 +12,8 @@ if [ -f Resources/AppIcon.icns ]; then
   cp Resources/AppIcon.icns build/untitled.app/Contents/Resources/AppIcon.icns
 fi
 codesign --force --sign - build/untitled.app
+# Resource replacements do not update the outer bundle's timestamp on their own.
+# Let Finder notice the new icon after an incremental build.
+touch build/untitled.app
 echo "Built: $(pwd)/build/untitled.app"
 if [ "${1:-}" = "--run" ]; then open build/untitled.app; fi

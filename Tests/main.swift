@@ -180,6 +180,9 @@ do {
     try check(punctuation.ranges.map(\.location) == [0, 8], "selection matching treats regex punctuation literally")
     let noSelection = try SelectionMatches(source: "abc", text: "")
     try check(noSelection.ranges.isEmpty, "empty selection has no occurrence matches")
+    try check(occurrences.all(including: [occurrences.ranges[1]]) == occurrences.ranges, "select all includes every exact match without duplicates")
+    try check(overlapping.all(including: [NSRange(location: 1, length: 2)]) == [NSRange(location: 1, length: 2), NSRange(location: 3, length: 2)], "select all preserves the original selection and skips overlapping matches")
+    try check(try SelectionMatches(source: "aaaa", text: "aa").all(including: [NSRange(location: 0, length: 2)]) == [NSRange(location: 0, length: 2), NSRange(location: 2, length: 2)], "select all preserves adjacent occurrence boundaries")
     print("\n\(count) storage, line-index and find checks passed")
 } catch {
     fputs("FAIL: \(error.localizedDescription)\n", stderr)

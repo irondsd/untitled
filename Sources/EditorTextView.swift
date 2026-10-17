@@ -5,38 +5,57 @@ final class EditorTextView: NSTextView {
     var onCancelFind: (() -> Bool)?
     var onCancelOccurrences: (() -> Bool)?
     var zeroWidthFindLocations: [Int] = [] { didSet { needsDisplay = true } }
-    private var multipleCarets: [NSValue]?
+    private var multipleSelections: [NSValue]? { didSet { needsDisplay = true } }
+    private var nativeMultipleSelection: [NSValue] = []
+    private(set) var isSettingEditingSelections = false
+    var editingSelectedRanges: [NSValue] {
+        validateMultipleSelections()
+        return multipleSelections ?? selectedRanges
+    }
+    func setEditingSelectedRanges(_ ranges: [NSValue]) {
+        isSettingEditingSelections = true
+        multipleSelections = nil
+        if ranges.count > 1 {
+            if ranges.allSatisfy({ $0.rangeValue.length == 0 }) { setSelectedRange(ranges[0].rangeValue) }
+            else { selectedRanges = ranges }
+            nativeMultipleSelection = selectedRanges
+            multipleSelections = ranges
+        } else { selectedRanges = ranges }
+        isSettingEditingSelections = false
+        NotificationCenter.default.post(name: NSTextView.didChangeSelectionNotification, object: self)
+    }
 
     override func keyDown(with event: NSEvent) {
-        restoreMultipleCarets()
-        if [UInt16(123), 124, 125, 126, 115, 119, 116, 121].contains(event.keyCode) { multipleCarets = nil }
+        validateMultipleSelections()
+        if [UInt16(123), 124, 125, 126, 115, 119, 116, 121].contains(event.keyCode) { multipleSelections = nil }
         super.keyDown(with: event)
-        // The input context resets selection after insertText returns. Restore the
-        // remaining carets at the end of the key event, ready for the next character.
-        restoreMultipleCarets()
+        validateMultipleSelections()
     }
 
     override func mouseDown(with event: NSEvent) {
-        multipleCarets = nil
+        multipleSelections = nil
         super.mouseDown(with: event)
     }
 
-    private func restoreMultipleCarets() {
-        guard let carets = multipleCarets else { return }
+    private func validateMultipleSelections() {
+        guard multipleSelections != nil else { return }
         guard undoManager?.isUndoing != true, undoManager?.isRedoing != true,
-              selectedRange() == carets.first?.rangeValue else { multipleCarets = nil; return }
-        if selectedRanges.count == 1 { selectedRanges = carets }
+              selectedRanges == nativeMultipleSelection else { multipleSelections = nil; return }
+        // AppKit merges adjacent ranges and retains only one empty caret. Keep
+        // their logical boundaries separately until the native selection changes.
     }
 
     override func cancelOperation(_ sender: Any?) {
-        restoreMultipleCarets()
-        multipleCarets = nil
-        if onCancelFind?() != true && onCancelOccurrences?() != true { super.cancelOperation(sender) }
+        validateMultipleSelections()
+        if onCancelFind?() == true { return }
+        if onCancelOccurrences?() == true { return }
+        if let first = multipleSelections?.first { setEditingSelectedRanges([first]); return }
+        super.cancelOperation(sender)
     }
 
     override func insertText(_ insertString: Any, replacementRange: NSRange) {
-        restoreMultipleCarets()
-        if selectedRanges.count > 1, !hasMarkedText(), undoManager?.isUndoing != true, undoManager?.isRedoing != true,
+        validateMultipleSelections()
+        if editingSelectedRanges.count > 1, !hasMarkedText(), undoManager?.isUndoing != true, undoManager?.isRedoing != true,
            replacementRange.location == NSNotFound || replacementRange == selectedRange(),
            let text = (insertString as? String) ?? (insertString as? NSAttributedString)?.string {
             replaceSelections(with: text)
@@ -44,10 +63,10 @@ final class EditorTextView: NSTextView {
     }
 
     override func deleteBackward(_ sender: Any?) {
-        restoreMultipleCarets()
-        guard selectedRanges.count > 1 else { super.deleteBackward(sender); return }
+        validateMultipleSelections()
+        guard editingSelectedRanges.count > 1 else { super.deleteBackward(sender); return }
         let source = string as NSString
-        replaceSelections(with: "", ranges: selectedRanges.map {
+        replaceSelections(with: "", ranges: editingSelectedRanges.map {
             let range = $0.rangeValue
             return range.length == 0 && range.location > 0
                 ? source.rangeOfComposedCharacterSequence(at: range.location - 1) : range
@@ -55,10 +74,10 @@ final class EditorTextView: NSTextView {
     }
 
     override func deleteForward(_ sender: Any?) {
-        restoreMultipleCarets()
-        guard selectedRanges.count > 1 else { super.deleteForward(sender); return }
+        validateMultipleSelections()
+        guard editingSelectedRanges.count > 1 else { super.deleteForward(sender); return }
         let source = string as NSString
-        replaceSelections(with: "", ranges: selectedRanges.map {
+        replaceSelections(with: "", ranges: editingSelectedRanges.map {
             let range = $0.rangeValue
             return range.length == 0 && range.location < source.length
                 ? source.rangeOfComposedCharacterSequence(at: range.location) : range
@@ -66,9 +85,9 @@ final class EditorTextView: NSTextView {
     }
 
     override func cut(_ sender: Any?) {
-        restoreMultipleCarets()
-        guard selectedRanges.count > 1 else { super.cut(sender); return }
-        guard selectedRanges.contains(where: { $0.rangeValue.length > 0 }) else { return }
+        validateMultipleSelections()
+        guard editingSelectedRanges.count > 1 else { super.cut(sender); return }
+        guard editingSelectedRanges.contains(where: { $0.rangeValue.length > 0 }) else { return }
         copy(sender)
         replaceSelections(with: "")
     }
@@ -77,7 +96,7 @@ final class EditorTextView: NSTextView {
     /// the primary range. Keep all edits in its native validation/undo/save path.
     private func replaceSelections(with text: String, ranges proposed: [NSRange]? = nil) {
         guard isEditable else { return }
-        let sorted = (proposed ?? selectedRanges.map(\.rangeValue)).sorted { $0.location < $1.location }
+        let sorted = (proposed ?? editingSelectedRanges.map(\.rangeValue)).sorted { $0.location < $1.location }
         var ranges: [NSRange] = []
         for range in sorted {
             if let last = ranges.last, NSMaxRange(last) > range.location || last == range {
@@ -102,22 +121,27 @@ final class EditorTextView: NSTextView {
             if carets.last?.rangeValue != caret { carets.append(NSValue(range: caret)) }
             delta += length - range.length
         }
-        selectedRanges = carets
-        multipleCarets = carets.count > 1 ? carets : nil
+        setEditingSelectedRanges(carets)
         breakUndoCoalescing()
     }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        guard !zeroWidthFindLocations.isEmpty, let window, let manager = layoutManager, let container = textContainer else { return }
+        let carets = editingSelectedRanges
+        let extra = multipleSelections != nil && window?.firstResponder === self && window?.isKeyWindow == true
+            ? carets.dropFirst().filter { $0.rangeValue.length == 0 }.map { $0.rangeValue.location } : []
+        guard !zeroWidthFindLocations.isEmpty || !extra.isEmpty,
+              let window, let manager = layoutManager, let container = textContainer else { return }
         let glyphs = manager.glyphRange(forBoundingRect: visibleRect.offsetBy(dx: -textContainerOrigin.x, dy: -textContainerOrigin.y), in: container)
         let visible = manager.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
         // Empty matches have no characters to tint; mark their insertion positions instead.
-        NSColor.systemYellow.setFill()
-        for location in zeroWidthFindLocations where location >= visible.location && location <= NSMaxRange(visible) {
-            let screen = firstRect(forCharacterRange: NSRange(location: location, length: 0), actualRange: nil)
-            let rect = convert(window.convertFromScreen(screen), from: nil)
-            NSRect(x: rect.minX, y: rect.minY, width: 2, height: rect.height).fill()
+        for (locations, color, width) in [(zeroWidthFindLocations, NSColor.systemYellow, CGFloat(2)), (extra, insertionPointColor ?? Theme.text, CGFloat(1))] {
+            color.setFill()
+            for location in locations where location >= visible.location && location <= NSMaxRange(visible) {
+                let screen = firstRect(forCharacterRange: NSRange(location: location, length: 0), actualRange: nil)
+                let rect = convert(window.convertFromScreen(screen), from: nil)
+                NSRect(x: rect.minX, y: rect.minY, width: width, height: rect.height).fill()
+            }
         }
     }
 
@@ -139,14 +163,14 @@ final class EditorTextView: NSTextView {
     }
     override func paste(_ sender: Any?) {
         guard !pasteRepeatHasEnded else { return }
-        restoreMultipleCarets()
-        if selectedRanges.count > 1, let text = NSPasteboard.general.string(forType: .string) { replaceSelections(with: text) }
+        validateMultipleSelections()
+        if editingSelectedRanges.count > 1, let text = NSPasteboard.general.string(forType: .string) { replaceSelections(with: text) }
         else { super.paste(sender) }
     }
     override func pasteAsPlainText(_ sender: Any?) {
         guard !pasteRepeatHasEnded else { return }
-        restoreMultipleCarets()
-        if selectedRanges.count > 1, let text = NSPasteboard.general.string(forType: .string) { replaceSelections(with: text) }
+        validateMultipleSelections()
+        if editingSelectedRanges.count > 1, let text = NSPasteboard.general.string(forType: .string) { replaceSelections(with: text) }
         else { super.pasteAsPlainText(sender) }
     }
 }

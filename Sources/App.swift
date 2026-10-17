@@ -256,6 +256,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         scheduleSave()
     }
     func textViewDidChangeSelection(_ notification: Notification) {
+        if (notification.object as? EditorTextView)?.isSettingEditingSelections == true { return }
         scheduleSave()
         if let id = currentID, notification.object as? NSTextView === editors[id]?.textView {
             findController.selectionDidChange()
@@ -461,6 +462,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         if findController.isVisible { findController.close() }
         occurrenceController.selectNext()
     }
+    @objc func selectAllOccurrences(_ sender: Any? = nil) {
+        guard let id = currentID, let editor = editors[id]?.textView, window.firstResponder === editor else { return }
+        if findController.isVisible { findController.close() }
+        occurrenceController.selectAll()
+    }
     @objc private func showReplace(_ sender: Any?) { findController.show(focusReplacement: true) }
     @objc private func findNext(_ sender: Any?) {
         findController.navigate()
@@ -529,6 +535,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         item(edit, "Paste", #selector(NSText.paste(_:)), "v")
         item(edit, "Select All", #selector(NSText.selectAll(_:)), "a")
         item(edit, "Select Next Occurrence", #selector(selectNextOccurrence), "d", target: self)
+        item(edit, "Select All Occurrences", #selector(selectAllOccurrences), "d", [.command, .shift], target: self)
         edit.addItem(.separator())
         item(edit, "Find and Replace…", #selector(showFind), "f", target: self)
         item(edit, "Replace…", #selector(showReplace), "f", [.command, .option], target: self)
@@ -566,7 +573,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        if menuItem.action == #selector(selectNextOccurrence) {
+        if menuItem.action == #selector(selectNextOccurrence) || menuItem.action == #selector(selectAllOccurrences) {
             guard NSApp.keyWindow == nil || NSApp.keyWindow === window, let id = currentID else { return false }
             return window.firstResponder === editors[id]?.textView
         }

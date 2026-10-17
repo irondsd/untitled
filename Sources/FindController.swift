@@ -302,7 +302,7 @@ final class FindController: NSObject, NSTextFieldDelegate {
     @objc func find(_ sender: Any? = nil) {
         guard panel.allButton.state == .on else { navigate(); return }
         guard let editor, let results, !results.matches.isEmpty, !isSearching else { return }
-        editor.selectedRanges = results.matches.map { NSValue(range: $0.range) }
+        editor.setEditingSelectedRanges(results.matches.map { NSValue(range: $0.range) })
         editor.scrollRangeToVisible(results.matches[0].range)
         setStatus("\(results.matches.count) matches selected · Current note")
     }

@@ -13,6 +13,7 @@ final class OccurrenceController {
     private var lastSelections: [NSRange] = []
     private var addingSelection = false
     private var pendingAdditions = 0
+    private var pendingSelectAll = false
     private var suspended = false
     private(set) var matches: SelectionMatches?
     private(set) var isSearching = false
@@ -38,7 +39,7 @@ final class OccurrenceController {
 
     func selectionDidChange() {
         guard !suspended, let editor else { return }
-        let selections = editor.selectedRanges.map(\.rangeValue)
+        let selections = editor.editingSelectedRanges.map(\.rangeValue)
         let source = editor.string as NSString
         guard let first = selections.first, first.length > 0, NSMaxRange(first) <= source.length else { clear(); return }
         let text = source.substring(with: first)
@@ -70,6 +71,9 @@ final class OccurrenceController {
                 }
                 let count = self.pendingAdditions
                 self.pendingAdditions = 0
+                let selectAll = self.pendingSelectAll
+                self.pendingSelectAll = false
+                if selectAll { self.selectEveryMatch() }
                 for _ in 0..<count { self.addNextSelection() }
             }
         }
@@ -95,20 +99,41 @@ final class OccurrenceController {
 
     private func addNextSelection() {
         guard let editor, let matches else { return }
-        let selected = editor.selectedRanges.map(\.rangeValue)
+        let selected = editor.editingSelectedRanges.map(\.rangeValue)
         guard let anchor = lastAdded ?? selected.last,
               let next = matches.next(after: anchor, excluding: selected) else { return }
         addingSelection = true
         lastAdded = next
-        editor.selectedRanges = (selected + [next]).sorted { $0.location < $1.location }.map { NSValue(range: $0) }
+        editor.setEditingSelectedRanges((selected + [next]).sorted { $0.location < $1.location }.map { NSValue(range: $0) })
         editor.scrollRangeToVisible(next)
         addingSelection = false
     }
 
+    func selectAll() {
+        guard !suspended, let editor else { return }
+        if editor.selectedRange().length == 0 { selectNext() }
+        guard editor.selectedRange().length > 0 else { return }
+        selectionDidChange()
+        if isSearching {
+            pendingSelectAll = true
+            pendingAdditions = 0
+        } else { selectEveryMatch() }
+    }
+
+    private func selectEveryMatch() {
+        guard let editor, let matches else { return }
+        let selected = editor.editingSelectedRanges.map(\.rangeValue)
+        let ranges = matches.all(including: selected)
+        guard !ranges.isEmpty else { return }
+        addingSelection = true
+        editor.setEditingSelectedRanges(ranges.map { NSValue(range: $0) })
+        addingSelection = false
+    }
+
     private func collapseSelections() -> Bool {
-        guard let editor, editor.selectedRanges.count > 1 else { return false }
+        guard let editor, editor.editingSelectedRanges.count > 1 else { return false }
         let range = lastAdded ?? editor.selectedRange()
-        editor.setSelectedRange(range)
+        editor.setEditingSelectedRanges([NSValue(range: range)])
         return true
     }
 
@@ -117,6 +142,7 @@ final class OccurrenceController {
         cancellation?.cancel()
         revision += 1
         pendingAdditions = 0
+        pendingSelectAll = false
         isSearching = false
         matches = nil
         needle = nil
