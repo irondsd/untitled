@@ -801,6 +801,31 @@ extension AppDelegate {
                 try close(openedID)
                 try check(store.records[openedID] == nil && !store.archived.contains { $0.id == openedID },
                     "closing an unchanged opened file skips the archive")
+                closedTabs.removeAll()
+                let keptID = try store.create(text: "Reopen me")
+                let middleID = try store.create(text: "middle")
+                try displaySelected()
+                let orderBeforeClose = store.session.openIDs
+                try close(keptID)
+                try check(try reopenLastClosed() && currentID == keptID, "reopen restores the last closed note")
+                try check(store.session.openIDs == orderBeforeClose, "reopened note returns to its old position")
+                try openFile(savedFileURL)
+                let reopenedFile = currentID!
+                try close(reopenedFile)
+                try close(middleID)
+                try check(try reopenLastClosed() && currentID == middleID, "reopen walks back through closed tabs")
+                try check(try reopenLastClosed() && store.records[currentID!]?.filePath == savedFileURL.standardizedFileURL.path
+                    && store.session.openIDs.count == orderBeforeClose.count + 1, "reopen brings back an unchanged opened file from disk")
+                // A keyboard-layout-translated event, so Shift reaches the menu as it does from real keys.
+                let reopenKey = CGEvent(keyboardEventSource: nil, virtualKey: 17, keyDown: true)!
+                reopenKey.flags = [.maskCommand, .maskShift]
+                let reopenEvent = NSEvent(cgEvent: reopenKey)!
+                for id in store.session.openIDs { try close(id) }
+                let leftBlank = currentID!
+                try check(store.session.openIDs == [leftBlank], "closing every tab leaves one blank note")
+                try check(NSApp.mainMenu!.performKeyEquivalent(with: reopenEvent), "Command-Shift-T handled by menu")
+                try check(store.session.openIDs.count == 1 && store.records[leftBlank] == nil && currentID != leftBlank,
+                    "reopening replaces the blank note left by closing the last tab")
                 let report: [String: Any] = ["passed": true, "checks": checks]
                 let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
                 try data.write(to: store.root.appendingPathComponent("smoke-results.json"))

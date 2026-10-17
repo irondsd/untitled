@@ -1,6 +1,13 @@
 import AppKit
 import UniformTypeIdentifiers
 
+/// A closed tab, newest last: archived notes by ID; discarded copies of unchanged files by path.
+struct ClosedTab {
+    var noteID: UUID?
+    var filePath: String?
+    var index: Int
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextViewDelegate, NSMenuItemValidation {
     var store: NotesStore!
@@ -26,6 +33,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     let findController = FindController()
     let occurrenceController = OccurrenceController()
     private var startupURLs: [URL] = []
+    /// Closed this launch; older notes reopen from the archive, newest first.
+    var closedTabs: [ClosedTab] = []
     private let headerHeight: CGFloat = 38
     private var isSmokeTesting: Bool { CommandLine.arguments.contains("--smoke-test") }
 
@@ -232,7 +241,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     }
     func close(_ id: UUID) throws {
         try flush()
+        let record = store.records[id], index = store.session.openIDs.firstIndex(of: id)
         try store.archive(id)
+        if let index {
+            if store.records[id] != nil { closedTabs.append(ClosedTab(noteID: id, index: index)) }
+            else if record?.openedFromFile == true, let path = record?.filePath { closedTabs.append(ClosedTab(filePath: path, index: index)) }
+        }
         if currentID == id { editors[id]?.scroll.removeFromSuperview(); currentID = nil }
         editors.removeValue(forKey: id)
         try displaySelected()
@@ -243,6 +257,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         try flush()
         try store.restore(id)
         try displaySelected()
+        archiveController?.reload()
+        searchController?.reload()
         if !isSmokeTesting { window.makeKeyAndOrderFront(nil) }
     }
 
@@ -315,8 +331,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         perform { try switchTab(store.session.openIDs[(index + delta + count) % count]) }
     }
     @objc private func reopenClosed(_ sender: Any?) {
-        guard let record = store.archived.first else { NSSound.beep(); return }
-        perform { try restore(record.id) }
+        perform { if try !reopenLastClosed() { NSSound.beep() } }
+    }
+    /// Like a browser: the most recent closed tab returns to its old position. When it replaces the
+    /// blank note left by closing the last tab, that blank note is closed.
+    @discardableResult
+    func reopenLastClosed() throws -> Bool {
+        try flush()
+        let open = store.session.openIDs
+        let blank = try open.count == 1 && store.isBlankScratch(open[0]) ? open[0] : nil
+        while let tab = closedTabs.popLast() {
+            guard isReopenable(tab) else { continue }
+            if let id = tab.noteID { try restore(id) }
+            else if let path = tab.filePath { try openFile(URL(fileURLWithPath: path)) }
+            if let id = currentID { try store.move(id, to: tab.index); rebuildTabs() }
+            if let blank { try close(blank) }
+            return true
+        }
+        guard let record = store.archived.first else { return false }
+        try restore(record.id)
+        if let blank { try close(blank) }
+        return true
+    }
+    private func isReopenable(_ tab: ClosedTab) -> Bool {
+        if let id = tab.noteID { return store.records[id] != nil && !store.session.openIDs.contains(id) }
+        guard let path = tab.filePath, FileManager.default.fileExists(atPath: path) else { return false }
+        return !store.session.openIDs.contains { store.records[$0]?.filePath == path }
     }
     @objc private func renameCurrent(_ sender: Any?) { if let id = currentID { rename(id) } }
     private func rename(_ id: UUID) {
@@ -609,7 +649,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             return NSApp.keyWindow?.isVisible != true || NSApp.keyWindow === window
         }
         if menuItem.action == #selector(selectNumber) { return store.session.openIDs.indices.contains(menuItem.tag) }
-        if menuItem.action == #selector(reopenClosed) { return !store.archived.isEmpty }
+        if menuItem.action == #selector(reopenClosed) { return closedTabs.contains(where: isReopenable) || !store.archived.isEmpty }
         if menuItem.action == #selector(setSyntax) {
             guard let id = currentID, let pane = editors[id] else { return false }
             let chosen = menuItem.representedObject as? String

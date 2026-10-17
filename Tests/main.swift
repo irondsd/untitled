@@ -117,6 +117,18 @@ do {
     try cleanup.associateFile(savedScratch, url: original, text: "scratch saved elsewhere")
     try cleanup.archive(savedScratch)
     try check(cleanup.archived.contains { $0.id == savedScratch }, "scratch notes saved to a file are still archived")
+    let blankScratch = try cleanup.create(text: " \n\t")
+    let blankFile = try cleanup.create(filePath: original.path)
+    try check(try cleanup.isBlankScratch(blankScratch) && !cleanup.isBlankScratch(blankFile) && !cleanup.isBlankScratch(savedScratch),
+        "only unnamed whitespace scratch notes count as blank")
+    let order = cleanup.session.openIDs
+    try cleanup.move(blankFile, to: 0)
+    try check(cleanup.session.openIDs == [blankFile] + order.filter { $0 != blankFile }, "move places a tab at the given position")
+    try cleanup.move(blankFile, to: 99)
+    try check(cleanup.session.openIDs.last == blankFile && NotesStore(root: cleanup.root).session.openIDs == cleanup.session.openIDs,
+        "move clamps to the end and persists the order")
+    try cleanup.archive(blankScratch)
+    try cleanup.archive(blankFile)
     let syntaxNote = try cleanup.create(text: "plain words")
     try cleanup.setSyntax(syntaxNote, language: .yaml)
     try check(NotesStore(root: cleanup.root).records[syntaxNote]?.syntaxOverride == .yaml, "manual syntax choice persists")

@@ -175,7 +175,7 @@ final class NotesStore {
         // A file opened from disk already lives there; keep its local copy only when it holds unsaved edits.
         let retain = record.openedFromFile == true
             ? Self.hash(body) != record.savedFileHash
-            : record.title != nil || record.filePath != nil || !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            : !Self.isBlankScratch(record, body: body)
         record.archivedAt = Date()
         if retain { try writeRecord(record) }
         var next = session
@@ -192,6 +192,15 @@ final class NotesStore {
             records.removeValue(forKey: id)
         }
         if session.openIDs.isEmpty { _ = try create() }
+    }
+
+    /// An unnamed, whitespace-only note that never belonged to a file; closing it keeps nothing.
+    func isBlankScratch(_ id: UUID) throws -> Bool {
+        guard let record = records[id], record.openedFromFile != true else { return false }
+        return Self.isBlankScratch(record, body: try text(id))
+    }
+    private static func isBlankScratch(_ record: NoteRecord, body: String) -> Bool {
+        record.title == nil && record.filePath == nil && body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     func deleteArchived(_ id: UUID) throws {
@@ -221,6 +230,17 @@ final class NotesStore {
         next.selectedID = id
         try encoder.encode(next).write(to: sessionURL, options: .atomic)
         records[id] = record
+        session = next
+    }
+
+    /// Moves an open tab, clamping the position to the tab strip.
+    func move(_ id: UUID, to index: Int) throws {
+        guard let current = session.openIDs.firstIndex(of: id) else { return }
+        var next = session
+        next.openIDs.remove(at: current)
+        next.openIDs.insert(id, at: max(0, min(index, next.openIDs.count)))
+        guard next.openIDs != session.openIDs else { return }
+        try encoder.encode(next).write(to: sessionURL, options: .atomic)
         session = next
     }
 

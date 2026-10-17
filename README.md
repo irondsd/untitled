@@ -29,6 +29,7 @@ To regenerate the existing app icon, run `./make-icon.sh`, then `./build.sh`. Th
 - The active tab shares the editor background; inactive tabs are slightly darker, including the window-button area when the first tab is inactive.
 - Scratch notes are named `untitled`. Right-click a tab to rename it, click the single-note title, or use ⇧⌘R. A custom title changes the note label, not a file's name on disk.
 - Closing a tab archives it unless it is an unnamed scratch note containing only whitespace, or a file opened from disk with no unsaved edits. Those local copies are discarded; the original file stays on disk. An opened file with unsaved edits is archived so the edits are not lost. Renamed empty notes and scratch notes saved to a file are retained. Closing the last tab creates a fresh blank note.
+- ⇧⌘T reopens closed tabs like a browser: the most recently closed tab comes back at its old position, and repeating it walks further back. Unchanged files opened from disk reopen from their path even though their local copy was discarded. Blank scratch notes are skipped. When closing the last tab left only a blank note, the reopened tab replaces it. The closed-tab history lasts until the app quits; after that, ⇧⌘T restores the most recently archived note.
 - Archive rows have a small trash button that permanently deletes the local note immediately, without confirmation. Original files opened from disk are never deleted. Existing archived blank notes remain until explicitly deleted.
 - Drag the top row, a tab label, or the centered note title to move the window. Buttons and right-click tab menus remain usable.
 - The red window button hides the window without archiving its tabs. Click the Dock icon to show it again.
@@ -53,7 +54,7 @@ To regenerate the existing app icon, run `./make-icon.sh`, then `./build.sh`. Th
 | ⌘1…⌘9 | Select tab by position |
 | ⌃Tab / ⇧⌃Tab | Next/previous tab |
 | ⌘W | Close and archive current tab (or close Settings/the archive window) |
-| ⇧⌘T | Reopen most recently closed tab |
+| ⇧⌘T | Reopen most recently closed tab, at its old position (repeat to go further back) |
 | ⇧⌘R | Rename note |
 | ⇧⌘A | Search the archive, preview and restore notes |
 | ⇧⌘F | Search all notes, including open notes |
@@ -130,3 +131,5 @@ Syntax formats are separate modules behind a small registry, with shared UTF-16 
 The extensible-engine and JavaScript/TypeScript update passes 212 storage/line-index/search/syntax checks and 243 native integration checks. It adds a shared JS/TS lexer with comments, escaped strings, template interpolation, regex/division handling, numeric literals, TypeScript keywords/types and function calls. Tests also cover registration of an additional format, deterministic detection ties and conflicts with YAML/Markdown. JavaScript and TypeScript colors were visually checked in a separately identified preview with disposable notes.
 
 Syntax colors are applied only to the visible text and one screen above and below, repainting as the note scrolls, and each token kind shares one color object. On an 8 MB JavaScript note, the physical footprint after highlighting fell from about 345 MB to 135 MB, and the main-thread time spent applying colors fell from about 0.5 s to about 1 ms. The idle footprint is unchanged at about 19 MB. The update passes 340 storage/line-index/search/syntax checks, including a new span index, and 272 native integration checks covering scroll repainting, shared colors, edits, brightness, tab switching and undo in a 4,000-line note.
+
+Browser-style reopening passes 343 storage/line-index/search/syntax checks and 279 native integration checks. They cover the original tab position, walking back through several closed tabs, reopening an unchanged file from disk after its local copy was discarded, replacing the blank note left by closing the last tab, and ⇧⌘T reaching the menu from a keyboard-layout-translated key event.
