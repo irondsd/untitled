@@ -1,6 +1,7 @@
 import Foundation
 
-enum NoteLanguage: String, CaseIterable { case plain, yaml, markdown, javascript }
+/// Case order is the Syntax menu order; raw values are stored in note metadata.
+enum NoteLanguage: String, CaseIterable { case plain, css, html, javascript, markdown, yaml }
 extension NoteLanguage {
     var displayName: String {
         switch self {
@@ -8,6 +9,8 @@ extension NoteLanguage {
         case .yaml: return "YAML"
         case .markdown: return "Markdown"
         case .javascript: return "JavaScript / TypeScript"
+        case .html: return "HTML"
+        case .css: return "CSS"
         }
     }
     /// Suggested for Save As when the note title has no extension of its own.
@@ -17,10 +20,12 @@ extension NoteLanguage {
         case .yaml: return "yaml"
         case .markdown: return "md"
         case .javascript: return "js"
+        case .html: return "html"
+        case .css: return "css"
         }
     }
 }
-enum SyntaxKind { case heading, marker, key, string, number, literal, comment, code, emphasis, link, keyword, type, function }
+enum SyntaxKind { case heading, marker, key, string, number, literal, comment, code, emphasis, link, keyword, type, function, tag, attribute }
 struct SyntaxSpan {
     let range: NSRange
     let kind: SyntaxKind
@@ -41,7 +46,7 @@ protocol SyntaxDefinition {
 
 /// A tolerant source highlighter, not a validator or renderer. Add formats to this registry.
 enum SyntaxEngine {
-    static let definitions: [SyntaxDefinition.Type] = [MarkdownSyntax.self, YAMLSyntax.self, JavaScriptSyntax.self]
+    static let definitions: [SyntaxDefinition.Type] = [MarkdownSyntax.self, YAMLSyntax.self, JavaScriptSyntax.self, HTMLSyntax.self, CSSSyntax.self]
 
     /// Pass `language` to skip detection and tokenize with a manually chosen format.
     static func analyze(_ text: String, using definitions: [SyntaxDefinition.Type] = SyntaxEngine.definitions,
@@ -58,6 +63,11 @@ enum SyntaxEngine {
 
     static func detectLanguage(_ text: String) -> NoteLanguage {
         detect(text, using: definitions, cancelled: { false })?.language ?? .plain
+    }
+
+    /// JavaScript notes pick js, jsx, ts or tsx from their contents.
+    static func fileExtension(for text: String, language: NoteLanguage) -> String {
+        language == .javascript ? JavaScriptSyntax.fileExtension(for: SyntaxSource(text)) : language.fileExtension
     }
 
     private static func detect(_ text: String, using definitions: [SyntaxDefinition.Type],

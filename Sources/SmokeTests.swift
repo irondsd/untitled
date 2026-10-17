@@ -719,7 +719,7 @@ extension AppDelegate {
                 try await waitForSyntax(editors[scriptID]!)
                 try check(editors[scriptID]!.syntax.language == .javascript, "restored JavaScript notes automatically regain syntax colors")
                 let syntaxMenu = NSApp.mainMenu!.item(withTitle: "Syntax")!.submenu!
-                func chooseSyntax(_ title: String) {
+                @MainActor func chooseSyntax(_ title: String) {
                     let item = syntaxMenu.items.first { $0.title.hasPrefix(title) }!
                     syntaxMenu.update()
                     NSApp.sendAction(item.action!, to: item.target, from: item)
@@ -734,6 +734,14 @@ extension AppDelegate {
                 try restore(scriptID)
                 try await waitForSyntax(editors[scriptID]!)
                 try check(editors[scriptID]!.syntax.language == .yaml, "chosen format survives archiving and restoring")
+                try check(["Plain Text", "CSS", "HTML", "JavaScript / TypeScript", "Markdown", "YAML"].allSatisfy { title in
+                    syntaxMenu.items.contains { $0.title == title } }, "Syntax menu lists every format")
+                chooseSyntax("HTML")
+                try await waitForSyntax(editors[scriptID]!)
+                try check(editors[scriptID]!.syntax.language == .html, "Syntax menu can force HTML")
+                chooseSyntax("CSS")
+                try await waitForSyntax(editors[scriptID]!)
+                try check(editors[scriptID]!.syntax.language == .css, "Syntax menu can force CSS")
                 chooseSyntax("Plain Text")
                 try await waitForSyntax(editors[scriptID]!)
                 try check(editors[scriptID]!.syntax.language == .plain && editors[scriptID]!.textView.layoutManager?

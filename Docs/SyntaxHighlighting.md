@@ -3,7 +3,7 @@
 Syntax highlighting has three layers:
 
 - `SyntaxEngine` chooses a format from its registry, using a bounded sample of the note, then tokenizes the whole note. It discards cancelled results.
-- Each `SyntaxDefinition` supplies content detection and UTF-16 token spans. YAML, Markdown, and the combined JavaScript/TypeScript mode live in separate `Syntax*.swift` files. These modules depend only on Foundation.
+- Each `SyntaxDefinition` supplies content detection and UTF-16 token spans. YAML, Markdown, HTML, CSS and the combined JavaScript/TypeScript/JSX mode live in separate `Syntax*.swift` files. These modules depend only on Foundation.
 - `EditorSyntaxHighlighter` schedules background work and maps semantic token kinds to temporary foreground colors. It owns AppKit integration, brightness, and stale-result protection. It never changes text storage or undo history.
 
 To add a format:
@@ -17,6 +17,6 @@ Use `SyntaxSource.lines` for logical lines and their absolute UTF-16 offsets. It
 
 Confidence values are comparable across formats: zero means no evidence; 1–69 is ambiguous; 70–94 is distinctive syntax; 95 and above identifies an enclosing format. Highest confidence wins. Equal scores retain registry order. Fenced Markdown and front matter should outrank enclosed snippets, and YAML block scalars should outrank code within them. Check strings and comments before treating their contents as language evidence. New formats should add evidence rather than raise scores to beat existing formats blindly.
 
-Detection samples the first 32,768 characters, remains content based, and falls back to plain text when there is no evidence. JavaScript and TypeScript intentionally share the `javascript` language identifier and one lexer; TypeScript keywords and type names extend JavaScript's tokens. Regex-versus-division detection is heuristic, and the lexer does not validate code or provide semantic type analysis. Markdown code fences retain a single code color.
+Detection samples the first 32,768 characters, remains content based, and falls back to plain text when there is no evidence. JavaScript and TypeScript intentionally share the `javascript` language identifier and one lexer; TypeScript keywords and type names extend JavaScript's tokens. JSX elements are lexed speculatively wherever an expression may start; malformed markup, or an outer element with no closing tag anywhere later, rolls back so TypeScript generics and assertions lex as code. Components, fragments, `{…}` attributes and `className` are JSX evidence and outrank plain HTML. HTML reuses the JavaScript and CSS modules for `<script>` and `<style>` bodies by shifting their spans; a full document or one with script/style blocks is an enclosing format. Add a case to `NoteLanguage` in menu order; its raw value is stored in note metadata, so never rename one. Regex-versus-division detection is heuristic, and the lexer does not validate code or provide semantic type analysis. Markdown code fences retain a single code color.
 
 Run `./test.sh`, then `./build.sh`. Native smoke tests must use a fresh disposable `--data-dir` as documented in the README. Never use real notes for tests.

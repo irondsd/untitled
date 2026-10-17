@@ -82,6 +82,8 @@ final class SyntaxHighlighter {
         case .comment: rgb = (0.66, 0.71, 0.76)
         case .marker: rgb = (0.63, 0.81, 0.85)
         case .link: rgb = (0.52, 0.85, 0.92)
+        case .tag: rgb = (0.95, 0.58, 0.62)
+        case .attribute: rgb = (0.93, 0.79, 0.55)
         }
         let scale = CGFloat(brightness / 0.93)
         return NSColor(calibratedRed: min(1, rgb.0 * scale), green: min(1, rgb.1 * scale), blue: min(1, rgb.2 * scale), alpha: 1)

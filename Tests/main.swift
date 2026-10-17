@@ -394,7 +394,151 @@ do {
     try check(forcedPlain.language == .plain && forcedPlain.spans.isEmpty, "choosing plain text removes highlighting")
     try check(SyntaxEngine.detectLanguage("name: api\nport: 80") == .yaml && SyntaxEngine.detectLanguage("hello there") == .plain,
         "detection alone reports the language")
-    try check(NoteLanguage.allCases.map(\.fileExtension) == ["txt", "yaml", "md", "js"], "each format suggests a file extension")
+    try check(NoteLanguage.allCases.map(\.fileExtension) == ["txt", "css", "html", "js", "md", "yaml"], "each format suggests a file extension")
+    func noOverlap(_ result: SyntaxResult, _ source: String) -> Bool {
+        result.spans.allSatisfy { $0.range.location >= 0 && $0.range.length > 0 && NSMaxRange($0.range) <= (source as NSString).length }
+            && zip(result.spans, result.spans.dropFirst()).allSatisfy { NSMaxRange($0.range) <= $1.range.location }
+    }
+
+    // JSX and TSX share the JavaScript format.
+    let tsx = #"""
+    import React from 'react';
+    type Props = { title: string; count?: number };
+    export function Card({ title, count }: Props) {
+      const big = count > 3 && count < 10;
+      return (
+        <section className="card" data-id={title}>
+          {/* a comment */}
+          <Header.Title level={2}>{title}</Header.Title>
+          <p>Don't panic — it's 100% fine</p>
+          <>
+            <input disabled value='x' />
+          </>
+          {big ? <Badge /> : null}
+        </section>
+      );
+    }
+    """#
+    let tsxSyntax = SyntaxEngine.analyze(tsx)
+    try check(tsxSyntax.language == .javascript, "TSX uses the JavaScript format")
+    for (needle, kind) in [("section", SyntaxKind.tag), ("className", .attribute), ("data-id", .attribute), ("\"card\"", .string),
+                           ("Header.Title", .type), ("level", .attribute), ("Badge", .type), ("disabled", .attribute), ("'x'", .string),
+                           ("a comment", .comment), ("Props", .type), ("string", .type)] {
+        try check(kinds(tsxSyntax, tsx, at: needle).contains(kind), "JSX token: \(needle)")
+    }
+    try check(kinds(tsxSyntax, tsx, at: "Don't panic") == [] && kinds(tsxSyntax, tsx, at: "100%") == [],
+        "JSX text children stay plain, including apostrophes")
+    try check(kinds(tsxSyntax, tsx, at: "3 &&").contains(.number), "comparisons are not mistaken for JSX")
+    try check(noOverlap(tsxSyntax, tsx), "JSX tokens stay ordered and in range")
+    let generics = "const id = <T,>(value: T): T => value;\nconst cast = <any>window;\nfunction first<T>(items: T[]) { return items[0] < 2; }"
+    let genericSyntax = SyntaxEngine.analyze(generics)
+    try check(genericSyntax.language == .javascript && !genericSyntax.spans.contains { $0.kind == .tag || $0.kind == .attribute }
+        && kinds(genericSyntax, generics, at: "value: T").contains(.key), "TypeScript generics and assertions are not JSX")
+    for snippet in ["<Button onClick={() => save()} />", "<div className=\"row\">Hi</div>", "<><Item /></>",
+                    "const el = <div>hello</div>;", "return <List items={items} />"] {
+        try check(SyntaxEngine.analyze(snippet).language == .javascript, "detects JSX: \(snippet.prefix(30))")
+    }
+    for (snippet, ext) in [("const a = 1;", "js"), ("const a: number = 1;", "ts"), ("const a = <div>x</div>;", "jsx"), (tsx, "tsx"),
+                           ("interface User { id: number }", "ts"), ("function f(a, b) { return { a: b }; }", "js")] {
+        try check(SyntaxEngine.fileExtension(for: snippet, language: .javascript) == ext, "JavaScript save extension: \(ext) for \(snippet.prefix(24))")
+    }
+    for snippet in ["const unfinished = <div className=", "const x = <div>{items.map(i => <Item key={i} />)", "a = <", "<div {...props"] {
+        let result = SyntaxEngine.analyze(snippet)
+        try check(noOverlap(result, snippet), "incomplete JSX keeps valid ranges: \(snippet.prefix(24))")
+    }
+
+    // CSS
+    let css = #"""
+    @import url("theme.css");
+    /* Layout 🧩 */
+    :root { --gap: 1.5rem; }
+    body > .card, #main a:hover::after {
+      margin: 0 auto;
+      color: #fff !important;
+      width: calc(100% - var(--gap));
+      background: url(data:image/png;base64,AAAA);
+      font-family: "Inter", sans-serif;
+    }
+    input[type="text"] { border: 1px solid rgba(0, 0, 0, .5) }
+    @media (max-width: 600px) {
+      .card { padding: -2px; }
+    }
+    """#
+    let cssSyntax = SyntaxEngine.analyze(css)
+    try check(cssSyntax.language == .css, "detects CSS")
+    for (needle, kind) in [("@import", SyntaxKind.keyword), ("Layout", .comment), ("--gap:", .key), ("1.5rem", .number), ("body", .tag),
+                           (".card,", .type), ("#main", .type), (":hover", .keyword), ("::after", .keyword), ("margin", .key),
+                           ("#fff", .number), ("!important", .keyword), ("calc", .function), ("100%", .number), ("\"Inter\"", .string),
+                           ("type=", .attribute), ("rgba", .function), (".5", .number), ("@media", .keyword), ("max-width", .key),
+                           ("600px", .number), ("-2px", .number), ("{", .marker)] {
+        try check(kinds(cssSyntax, css, at: needle).contains(kind), "CSS token: \(needle)")
+    }
+    try check(!kinds(cssSyntax, css, at: "AAAA").contains(.key) && kinds(cssSyntax, css, at: "auto") == [],
+        "CSS value keywords stay plain and data URLs keep their semicolons")
+    try check(noOverlap(cssSyntax, css), "CSS tokens stay ordered and in range")
+    for snippet in ["body {\n  margin: 0;\n  padding: 0;\n}", ".btn { color: red }", "a:hover { text-decoration: underline; }",
+                    "@media print {\n  nav { display: none; }\n}", "@import 'base.css';",
+                    ".parent {\n  color: blue;\n  &:hover { color: red; }\n}"] {
+        try check(SyntaxEngine.analyze(snippet).language == .css, "detects CSS: \(snippet.prefix(24))")
+    }
+    for (snippet, language) in [
+        ("interface User {\n  id: number;\n  name: string;\n}", NoteLanguage.javascript),
+        ("if (ready) {\n  color: red;\n}", .javascript),
+        ("const style = {\n  color: 'red',\n};", .javascript),
+        ("color: red\nmargin: 0", .yaml),
+        ("Hello {name}: welcome;", .plain)
+    ] {
+        try check(SyntaxEngine.analyze(snippet).language == language, "CSS detection respects other formats: \(snippet.prefix(24))")
+    }
+    try check(SyntaxEngine.analyze("{\"color\": \"red\"}").language != .css, "JSON objects are not CSS")
+    for snippet in ["body { color:", ".a { b: c", "/* open", "a[href=\"x", "@media (", "x { y: \"z"] {
+        try check(noOverlap(SyntaxEngine.analyze(snippet, language: .css), snippet), "incomplete CSS keeps valid ranges: \(snippet)")
+    }
+
+    // HTML
+    let html = #"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset=utf-8>
+      <style>
+        body { margin: 0; }
+      </style>
+    </head>
+    <body>
+      <!-- note -->
+      <p class='intro'>Fish &amp; chips — const x = 1;</p>
+      <script type="module">
+        const answer = 42; // "</p>"
+      </script>
+      <script type="text/template"><b>raw</b></script>
+    </body>
+    </html>
+    """#
+    let htmlSyntax = SyntaxEngine.analyze(html)
+    try check(htmlSyntax.language == .html, "detects HTML documents")
+    for (needle, kind) in [("<!DOCTYPE html>", SyntaxKind.keyword), ("html lang", .tag), ("lang", .attribute), ("\"en\"", .string),
+                           ("utf-8", .string), ("margin", .key), ("note", .comment), ("class", .attribute), ("'intro'", .string),
+                           ("&amp;", .literal), ("const answer", .keyword), ("42", .number), ("\"</p>\"", .comment), ("</", .marker)] {
+        try check(kinds(htmlSyntax, html, at: needle).contains(kind), "HTML token: \(needle)")
+    }
+    try check(kinds(htmlSyntax, html, at: "const x") == [] && kinds(htmlSyntax, html, at: "raw") == [],
+        "HTML text and template scripts are not highlighted as code")
+    try check(noOverlap(htmlSyntax, html), "HTML tokens stay ordered and in range")
+    for snippet in ["<div class=\"row\">\n  <p>Hello</p>\n</div>", "<ul>\n<li>One</li>\n</ul>", "<!-- comment -->\n<p>x</p>",
+                    "<style>.a { color: red; }</style>", "<section>\n  <h1>{title}</h1>\n</section>"] {
+        try check(SyntaxEngine.analyze(snippet).language == .html, "detects HTML: \(snippet.prefix(24))")
+    }
+    for (snippet, language) in [
+        ("<p align=\"center\"><img src=\"logo.png\"></p>\n\n# Project\n\n- one\n- two", NoteLanguage.markdown),
+        ("Use the <b>bold</b> tag.", .plain),
+        ("a < b && c > d", .plain)
+    ] {
+        try check(SyntaxEngine.analyze(snippet).language == language, "HTML detection respects other formats: \(snippet.prefix(24))")
+    }
+    for snippet in ["<div class=\"x", "<script>const a = '", "<!-- open", "<p>&amp", "<a href=x", "<style>a { color:"] {
+        try check(noOverlap(SyntaxEngine.analyze(snippet, language: .html), snippet), "incomplete HTML keeps valid ranges: \(snippet)")
+    }
     try check(SyntaxEngine.analyze("custom: source", using: [TestFormat.self], cancelled: { true }).spans.isEmpty,
         "cancellation applies to added formats through the shared engine")
     print("\n\(count) storage, line-index, find and syntax checks passed")

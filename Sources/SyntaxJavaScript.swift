@@ -1,6 +1,6 @@
 import Foundation
 
-/// JavaScript and TypeScript share a lexer; TypeScript adds keywords and type names.
+/// JavaScript and TypeScript share a lexer; TypeScript adds keywords and type names, and JSX/TSX adds elements.
 /// This is deliberately tolerant of incomplete source while typing, rather than a compiler/parser.
 struct JavaScriptSyntax: SyntaxDefinition {
     static let language = NoteLanguage.javascript
@@ -18,8 +18,11 @@ struct JavaScriptSyntax: SyntaxDefinition {
     fileprivate static let literals: Set<String> = ["true", "false", "null", "undefined", "NaN", "Infinity"]
 
     static func confidence(in source: SyntaxSource) -> Int {
-        let tokens = JavaScriptLexer(source).scan()
+        let lexer = JavaScriptLexer(source)
+        let tokens = lexer.scan()
         guard !source.cancelled() else { return 0 }
+        // Components, fragments and {expression} attributes distinguish JSX from plain HTML markup.
+        if lexer.sawJSXSyntax { return 88 }
         // Keep literal placeholders for import/call syntax, but never inspect their contents.
         let code = tokens.filter { $0.kind != .comment && $0.kind != .templateText }
         func word(_ index: Int) -> String { code.indices.contains(index) ? code[index].text : "" }
@@ -28,8 +31,8 @@ struct JavaScriptSyntax: SyntaxDefinition {
             if source.cancelled() { return 0 }
             guard code[index].kind == .identifier || code[index].kind == .punctuation else { continue }
             let value = word(index), next = word(index + 1)
-            // Member names such as object.class and mapping keys such as "type:" are not declarations.
-            if word(index - 1) == "." || word(index - 1) == "?." || next == ":" { continue }
+            // Member names such as object.class, mapping keys such as "type:" and CSS @import are not declarations.
+            if word(index - 1) == "." || word(index - 1) == "?." || word(index - 1) == "@" || next == ":" { continue }
             if ["const", "let", "var"].contains(value), identifier(index + 1) || ["{", "["].contains(next) {
                 let end = min(code.count, index + 24)
                 if code[(index + 1)..<end].contains(where: { $0.text == "=" }) { return 90 }
@@ -82,6 +85,8 @@ struct JavaScriptSyntax: SyntaxDefinition {
             case .string, .templateText, .regexp: kind = .string
             case .number: kind = .number
             case .punctuation: kind = .marker
+            case .jsxTag: kind = token.text.first?.isUppercase == true || token.text.contains(".") ? .type : .tag
+            case .jsxAttribute: kind = .attribute
             case .identifier:
                 if next == ":" { kind = .key }
                 else if !member && literals.contains(token.text) { kind = .literal }
@@ -94,10 +99,32 @@ struct JavaScriptSyntax: SyntaxDefinition {
         }
         return result
     }
+
+    private static let typeScriptOnly: Set<String> = [
+        "interface", "enum", "implements", "declare", "namespace", "readonly", "abstract", "satisfies", "keyof", "infer"
+    ]
+    /// js, jsx, ts or tsx for Save As, from the same tokens used for highlighting.
+    static func fileExtension(for source: SyntaxSource) -> String {
+        let lexer = JavaScriptLexer(source)
+        let code = lexer.scan().filter { $0.kind != .comment }
+        let jsx = code.contains { $0.kind == .jsxTag }
+        func word(_ index: Int) -> String { code.indices.contains(index) ? code[index].text : "" }
+        let typed = code.indices.contains { index in
+            guard code[index].kind == .identifier, word(index - 1) != ".", word(index - 1) != "?." else { return false }
+            let value = code[index].text
+            if typeScriptOnly.contains(value) && code.indices.contains(index + 1) && code[index + 1].kind == .identifier { return true }
+            if value == "type", code.indices.contains(index + 1), code[index + 1].kind == .identifier, word(index + 2) == "=" { return true }
+            if value == "as", word(index + 1) == "const" { return true }
+            // A type annotation: `name: string`, `): Promise<…>` and similar.
+            return word(index - 1) == ":" && (types.contains(value) || value == "void")
+                && (code.indices.contains(index - 2) && code[index - 2].kind == .identifier || word(index - 2) == ")" || word(index - 2) == "?")
+        }
+        return (typed ? "ts" : "js") + (jsx ? "x" : "")
+    }
 }
 
 private struct JavaScriptToken {
-    enum Kind { case identifier, string, templateText, regexp, number, comment, punctuation }
+    enum Kind { case identifier, string, templateText, regexp, number, comment, punctuation, jsxTag, jsxAttribute }
     let range: NSRange
     let text: String
     let kind: Kind
@@ -110,6 +137,9 @@ private final class JavaScriptLexer {
     private let units: [UInt16]
     private var position = 0
     private var tokens: [JavaScriptToken] = []
+    private(set) var sawJSXSyntax = false
+    /// Next known offset of each closing tag; NSNotFound stays valid for the rest of the scan.
+    private var closingTags: [String: Int] = [:]
     private static let controls: Set<String> = ["if", "while", "for", "with", "switch", "catch"]
     private static let expressionKeywords: Set<String> = ["return", "throw", "case", "delete", "void", "typeof", "new", "in", "of", "yield", "await", "else", "do"]
     private static let operators: Set<String> = [
@@ -143,7 +173,7 @@ private final class JavaScriptLexer {
         let range = NSRange(location: start, length: position - start)
         guard range.length > 0 else { return }
         // Literal bodies can be large; detection only needs their kind and range.
-        let value = kind == .identifier || kind == .punctuation ? text.substring(with: range) : ""
+        let value = [.identifier, .punctuation, .jsxTag, .jsxAttribute].contains(kind) ? text.substring(with: range) : ""
         tokens.append(JavaScriptToken(range: range, text: value, kind: kind))
     }
 
@@ -197,6 +227,11 @@ private final class JavaScriptLexer {
                 previous = word
                 continue
             }
+            // JSX can only begin where an expression can; `a < b` and `f<T>()` never reach here.
+            if character == 60 && expressionAllowed && (identifierStart(unit(1)) || unit(1) == 62)
+                && nesting < 64 && jsxElement(nesting: nesting, outermost: true) {
+                expressionAllowed = false; previous = "literal"; continue
+            }
             position += 1
             for length in stride(from: min(4, units.count - start), through: 2, by: -1) {
                 let value = text.substring(with: NSRange(location: start, length: length))
@@ -215,6 +250,100 @@ private final class JavaScriptLexer {
             }
             previous = value
         }
+    }
+
+    private func skipWhitespace() {
+        while position < units.count && whitespace(unit()) { position += 1 }
+    }
+    private func jsxName() {
+        // Tag and attribute names may contain member dots, namespaces and dashes.
+        while position < units.count && (identifierPart(unit()) || [UInt16(46), 58, 45].contains(unit())) { position += 1 }
+    }
+    /// Speculative: on malformed markup every token and position change is rolled back so the
+    /// text lexes as ordinary code (TypeScript generics such as `<T,>(x) => x` or `<T>value`).
+    private func jsxElement(nesting: Int, outermost: Bool) -> Bool {
+        let mark = position, count = tokens.count, evidence = sawJSXSyntax
+        func fail() -> Bool {
+            position = mark; tokens.removeSubrange(count...); sawJSXSyntax = evidence
+            return false
+        }
+        position += 1; add(mark, .punctuation)
+        let nameStart = position
+        jsxName()
+        add(nameStart, .jsxTag)
+        let name = text.substring(with: NSRange(location: nameStart, length: position - nameStart))
+        if name.isEmpty || name.first?.isUppercase == true || name.contains(".") { sawJSXSyntax = true }
+        while true {
+            skipWhitespace()
+            guard position < units.count, !checkpoint() else { return fail() }
+            let start = position, character = unit()
+            if character == 47 && unit(1) == 62 { position += 2; add(start, .punctuation); return true }
+            if character == 62 { position += 1; add(start, .punctuation); break }
+            if name.isEmpty { return fail() }
+            if character == 123 {
+                guard expressionContainer(nesting: nesting) else { return fail() }
+                sawJSXSyntax = true; continue
+            }
+            guard identifierStart(character) else { return fail() }
+            jsxName()
+            add(start, .jsxAttribute)
+            if ["className", "htmlFor"].contains(tokens.last!.text) { sawJSXSyntax = true }
+            skipWhitespace()
+            guard unit() == 61 else { continue }
+            let equals = position
+            position += 1; add(equals, .punctuation)
+            skipWhitespace()
+            let valueStart = position, quote = unit()
+            if quote == 34 || quote == 39 {
+                // JSX attribute strings have no escapes and may span lines.
+                position += 1
+                while position < units.count && unit() != quote && !checkpoint() { position += 1 }
+                if position < units.count { position += 1 }
+                add(valueStart, .string)
+            } else if quote == 123 {
+                guard expressionContainer(nesting: nesting) else { return fail() }
+                sawJSXSyntax = true
+            } else if !(quote == 60 && nesting < 64 && jsxElement(nesting: nesting + 1, outermost: false)) {
+                return fail()
+            }
+        }
+        // An unclosed outer element is more likely a TypeScript generic or assertion.
+        if outermost {
+            let closing = name.isEmpty ? "</>" : "</" + name
+            var found = closingTags[closing]
+            if found == nil || found! != NSNotFound && found! < position {
+                found = text.range(of: closing, options: .literal, range: NSRange(location: position, length: units.count - position)).location
+                closingTags[closing] = found
+            }
+            guard found != NSNotFound else { return fail() }
+        }
+        while position < units.count && !checkpoint() {
+            let character = unit()
+            if character == 123 { _ = expressionContainer(nesting: nesting); continue }
+            if character == 60 && unit(1) == 47 {
+                let start = position
+                position += 2; add(start, .punctuation)
+                skipWhitespace()
+                let closeName = position
+                jsxName(); add(closeName, .jsxTag)
+                skipWhitespace()
+                if unit() == 62 { let close = position; position += 1; add(close, .punctuation) }
+                return true
+            }
+            if character == 60 && nesting < 64 && jsxElement(nesting: nesting + 1, outermost: false) { continue }
+            // Text children, including apostrophes and slashes, are not code.
+            position += 1
+        }
+        return true
+    }
+    private func expressionContainer(nesting: Int) -> Bool {
+        let open = position
+        position += 1; add(open, .punctuation)
+        scanCode(interpolation: true, nesting: nesting + 1)
+        guard position < units.count && unit() == 125 else { return false }
+        let close = position
+        position += 1; add(close, .punctuation)
+        return true
     }
 
     private func quoted(_ quote: UInt16) {

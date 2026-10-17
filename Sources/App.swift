@@ -413,7 +413,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         let name = record.displayTitle
         if !URL(fileURLWithPath: name).pathExtension.isEmpty { return name }
         let language = record.syntaxOverride ?? SyntaxEngine.detectLanguage(text)
-        return name + "." + language.fileExtension
+        return name + "." + SyntaxEngine.fileExtension(for: text, language: language)
     }
 
     @objc private func setSyntax(_ sender: NSMenuItem) {
