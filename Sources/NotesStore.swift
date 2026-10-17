@@ -12,6 +12,13 @@ struct NoteRecord: Codable, Identifiable {
     var selectionLocation: Int = 0
     var selectionLength: Int = 0
     var scrollOffset: Double = 0
+    /// Raw NoteLanguage value chosen from the Syntax menu; nil follows automatic detection.
+    /// Kept as a string so an unknown future value never makes the metadata unreadable.
+    var syntax: String?
+    /// True when the note began as a local copy of a file opened from disk, not as a scratch note.
+    var openedFromFile: Bool?
+
+    var syntaxOverride: NoteLanguage? { syntax.flatMap(NoteLanguage.init(rawValue:)) }
 
     var displayTitle: String {
         if let title, !title.isEmpty { return title }
@@ -106,7 +113,7 @@ final class NotesStore {
         let id = UUID(), now = Date()
         let record = NoteRecord(id: id, title: nil, filePath: filePath,
             savedFileHash: filePath == nil ? nil : Self.hash(text),
-            createdAt: now, modifiedAt: now, archivedAt: nil)
+            createdAt: now, modifiedAt: now, archivedAt: nil, openedFromFile: filePath == nil ? nil : true)
         try text.write(to: textURL(id), atomically: true, encoding: .utf8)
         try writeRecord(record)
         records[id] = record
@@ -141,6 +148,13 @@ final class NotesStore {
         records[id] = record
     }
 
+    func setSyntax(_ id: UUID, language: NoteLanguage?) throws {
+        guard var record = records[id] else { return }
+        record.syntax = language?.rawValue
+        try writeRecord(record)
+        records[id] = record
+    }
+
     func associateFile(_ id: UUID, url: URL, text: String) throws {
         guard var record = records[id] else { return }
         record.filePath = url.path
@@ -158,8 +172,10 @@ final class NotesStore {
     func archive(_ id: UUID) throws {
         guard var record = records[id], let index = session.openIDs.firstIndex(of: id) else { return }
         let body = try text(id)
-        let retain = record.title != nil || record.filePath != nil ||
-            !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        // A file opened from disk already lives there; keep its local copy only when it holds unsaved edits.
+        let retain = record.openedFromFile == true
+            ? Self.hash(body) != record.savedFileHash
+            : record.title != nil || record.filePath != nil || !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         record.archivedAt = Date()
         if retain { try writeRecord(record) }
         var next = session

@@ -176,7 +176,7 @@ final class ArchiveController: NSWindowController, NSTableViewDataSource, NSTabl
         let cell = ArchiveCell()
         let record = rows[row]
         cell.noteID = record.id
-        cell.onDelete = { [weak self] id in self?.confirmDelete(id) }
+        cell.onDelete = { [weak self] id in self?.deleteNote(id) }
         let title = NSTextField(labelWithString: record.displayTitle)
         title.font = .systemFont(ofSize: 13, weight: .medium)
         title.lineBreakMode = .byTruncatingMiddle
@@ -211,25 +211,15 @@ final class ArchiveController: NSWindowController, NSTableViewDataSource, NSTabl
         cell.textField = title
         return cell
     }
-    private func confirmDelete(_ id: UUID) {
-        guard let record = store.records[id], !store.session.openIDs.contains(id), let window else { return }
-        let alert = NSAlert()
-        alert.messageText = "Delete “\(record.displayTitle)”?"
-        alert.informativeText = "This permanently removes the note from untitled. It cannot be undone." +
-            (record.filePath == nil ? "" : "\n\nThe original file on disk will stay untouched.")
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Delete Note")
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertSecondButtonReturn, let self else { return }
-            do {
-                try self.store.deleteArchived(id)
-                self.reload()
-                self.onDeleted()
-            } catch {
-                self.reload()
-                self.onError(error)
-            }
+    private func deleteNote(_ id: UUID) {
+        guard store.records[id] != nil, !store.session.openIDs.contains(id) else { return }
+        do {
+            try store.deleteArchived(id)
+            reload()
+            onDeleted()
+        } catch {
+            reload()
+            onError(error)
         }
     }
     func tableViewSelectionDidChange(_ notification: Notification) { updatePreview() }

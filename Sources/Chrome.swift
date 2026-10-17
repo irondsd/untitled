@@ -196,6 +196,7 @@ final class EditorPane {
         textView = EditorTextView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         lineNumbers = LineNumberRuler(scrollView: scroll, textView: textView)
         syntax = SyntaxHighlighter(editor: textView)
+        syntax.override = record.syntaxOverride
         textView.isRichText = false
         textView.importsGraphics = false
         textView.allowsUndo = true

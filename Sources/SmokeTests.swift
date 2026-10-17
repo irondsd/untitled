@@ -718,6 +718,38 @@ extension AppDelegate {
                 try restore(scriptID)
                 try await waitForSyntax(editors[scriptID]!)
                 try check(editors[scriptID]!.syntax.language == .javascript, "restored JavaScript notes automatically regain syntax colors")
+                let syntaxMenu = NSApp.mainMenu!.item(withTitle: "Syntax")!.submenu!
+                func chooseSyntax(_ title: String) {
+                    let item = syntaxMenu.items.first { $0.title.hasPrefix(title) }!
+                    syntaxMenu.update()
+                    NSApp.sendAction(item.action!, to: item.target, from: item)
+                }
+                chooseSyntax("YAML")
+                try await waitForSyntax(editors[scriptID]!)
+                try check(editors[scriptID]!.syntax.language == .yaml && store.records[scriptID]?.syntaxOverride == .yaml,
+                    "Syntax menu forces a format over detection")
+                syntaxMenu.update()
+                try check(syntaxMenu.items.first { $0.title == "YAML" }?.state == .on, "Syntax menu checks the chosen format")
+                try close(scriptID)
+                try restore(scriptID)
+                try await waitForSyntax(editors[scriptID]!)
+                try check(editors[scriptID]!.syntax.language == .yaml, "chosen format survives archiving and restoring")
+                chooseSyntax("Plain Text")
+                try await waitForSyntax(editors[scriptID]!)
+                try check(editors[scriptID]!.syntax.language == .plain && editors[scriptID]!.textView.layoutManager?
+                    .temporaryAttribute(.foregroundColor, atCharacterIndex: 0, effectiveRange: nil) == nil, "choosing Plain Text removes colors")
+                chooseSyntax("Detect Automatically")
+                try await waitForSyntax(editors[scriptID]!)
+                syntaxMenu.update()
+                try check(editors[scriptID]!.syntax.language == .javascript && store.records[scriptID]?.syntax == nil
+                    && syntaxMenu.items.first!.title.contains("JavaScript"), "Detect Automatically returns to the detected format")
+                let savedFileURL = store.root.appendingPathComponent("opened-readme.md")
+                try "# Opened".write(to: savedFileURL, atomically: true, encoding: .utf8)
+                try openFile(savedFileURL)
+                let openedID = currentID!
+                try close(openedID)
+                try check(store.records[openedID] == nil && !store.archived.contains { $0.id == openedID },
+                    "closing an unchanged opened file skips the archive")
                 let report: [String: Any] = ["passed": true, "checks": checks]
                 let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
                 try data.write(to: store.root.appendingPathComponent("smoke-results.json"))

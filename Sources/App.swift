@@ -395,7 +395,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         guard let id = currentID, let record = store.records[id], let pane = editors[id] else { return }
         let panel = NSSavePanel()
         panel.title = "Save Note as File"
-        panel.nameFieldStringValue = record.displayTitle == "untitled" ? "untitled.txt" : record.displayTitle
+        panel.nameFieldStringValue = suggestedFileName(record, text: pane.textView.string)
         panel.canCreateDirectories = true
         panel.beginSheetModal(for: window) { [weak self] response in
             guard response == .OK, let url = panel.url, let self else { return }
@@ -405,6 +405,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
                 try self.store.associateFile(id, url: url, text: pane.textView.string)
                 self.rebuildTabs()
             }
+        }
+    }
+
+    /// Titles that already name an extension are kept; otherwise the note's syntax supplies one.
+    private func suggestedFileName(_ record: NoteRecord, text: String) -> String {
+        let name = record.displayTitle
+        if !URL(fileURLWithPath: name).pathExtension.isEmpty { return name }
+        let language = record.syntaxOverride ?? SyntaxEngine.detectLanguage(text)
+        return name + "." + language.fileExtension
+    }
+
+    @objc private func setSyntax(_ sender: NSMenuItem) {
+        guard let id = currentID, let pane = editors[id] else { return }
+        let language = sender.representedObject as? String
+        perform {
+            try store.setSyntax(id, language: language.flatMap(NoteLanguage.init(rawValue:)))
+            pane.syntax.override = store.records[id]?.syntaxOverride
         }
     }
 
@@ -557,6 +574,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             valueItem.tag = value
         }
         item(view, "Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control])
+        let syntaxMenu = submenu("Syntax")
+        item(syntaxMenu, "Detect Automatically", #selector(setSyntax), target: self)
+        syntaxMenu.addItem(.separator())
+        for language in NoteLanguage.allCases {
+            item(syntaxMenu, language.displayName, #selector(setSyntax), target: self).representedObject = language.rawValue
+        }
         let tabMenu = submenu("Tabs")
         item(tabMenu, "Next Tab", #selector(nextTab), "\t", [.control], target: self)
         item(tabMenu, "Previous Tab", #selector(previousTab), "\t", [.control, .shift], target: self)
@@ -587,6 +610,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         }
         if menuItem.action == #selector(selectNumber) { return store.session.openIDs.indices.contains(menuItem.tag) }
         if menuItem.action == #selector(reopenClosed) { return !store.archived.isEmpty }
+        if menuItem.action == #selector(setSyntax) {
+            guard let id = currentID, let pane = editors[id] else { return false }
+            let chosen = menuItem.representedObject as? String
+            menuItem.state = chosen == pane.syntax.override?.rawValue ? .on : .off
+            if chosen == nil {
+                // Show what detection picked while it is in charge.
+                menuItem.title = pane.syntax.override == nil && pane.syntax.language != .plain
+                    ? "Detect Automatically (\(pane.syntax.language.displayName))" : "Detect Automatically"
+            }
+            return NSApp.keyWindow == nil || NSApp.keyWindow === window
+        }
         if menuItem.action == #selector(changeOpacity) { menuItem.state = Int((preferences.opacity * 100).rounded()) == menuItem.tag ? .on : .off }
         return true
     }

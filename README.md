@@ -20,8 +20,8 @@ To regenerate the existing app icon, run `./make-icon.sh`, then `./build.sh`. Th
 - Multiple tabs: a compact tab strip alongside the native window buttons.
 - The active tab shares the editor background; inactive tabs are slightly darker, including the window-button area when the first tab is inactive.
 - Scratch notes are named `untitled`. Right-click a tab to rename it, click the single-note title, or use ⇧⌘R. A custom title changes the note label, not a file's name on disk.
-- Closing a tab archives it unless it is an unnamed scratch note containing only whitespace. Those blank notes are discarded. Renamed empty notes and files opened from disk are retained. Closing the last tab creates a fresh blank note.
-- Archive rows have a small trash button to permanently delete the local note after confirmation. Original files opened from disk are never deleted. Existing archived blank notes remain until explicitly deleted.
+- Closing a tab archives it unless it is an unnamed scratch note containing only whitespace, or a file opened from disk with no unsaved edits. Those local copies are discarded; the original file stays on disk. An opened file with unsaved edits is archived so the edits are not lost. Renamed empty notes and scratch notes saved to a file are retained. Closing the last tab creates a fresh blank note.
+- Archive rows have a small trash button that permanently deletes the local note immediately, without confirmation. Original files opened from disk are never deleted. Existing archived blank notes remain until explicitly deleted.
 - Drag the top row, a tab label, or the centered note title to move the window. Buttons and right-click tab menus remain usable.
 - The red window button hides the window without archiving its tabs. Click the Dock icon to show it again.
 - Automatic saving follows edits after a 0.4-second pause, and runs before tab switches, closing, app deactivation, and quitting. A sudden crash can lose the last unsaved fraction of a second.
@@ -30,6 +30,8 @@ To regenerate the existing app icon, run `./make-icon.sh`, then `./build.sh`. Th
 - Selecting text highlights exact repeats in the current note, with Find closed. ⌘D adds the next occurrence to the selection and wraps around; with a caret, the first ⌘D selects the word under it. ⇧⌘D selects all occurrences at once, using the word under the caret if nothing is selected. Matching is literal and case-sensitive, independent of Find settings. Typing, paste, and deletion affect every selected occurrence, with native undo. Esc reduces multiple selections to one; clicking elsewhere clears the preview. Whitespace-only selections do not trigger highlighting.
 - Line numbers count real logical lines; soft-wrapped rows share a line number. Word wrapping and a native bottom find/replace panel are included.
 - YAML, Markdown, and JavaScript/TypeScript are detected automatically from note content when you paste, type, open or restore a note. Highlighting updates after a brief pause and switches formats as the content changes. YAML colors keys, quoted strings, numbers, booleans/nulls, comments, anchors, aliases and block scalars; Markdown colors headings, emphasis, links, list/quote markers and code. Markdown front matter uses YAML colors. Source text stays visible and unchanged; code fences use a single code color. Detection is heuristic and samples the first 32,768 characters: ambiguous prose stays plain, while simple lowercase `key: value` entries are treated as YAML. JavaScript and TypeScript share one mode, coloring keywords, types, functions, strings/template expressions, regexes, numbers, comments and punctuation. Colors follow font brightness, and Find/selection highlights remain available.
+- The Syntax menu overrides detection per note: choose Plain Text or a specific format, or Detect Automatically (the default, which shows the detected format). The choice is saved with the note.
+- Save As suggests a file extension from the note's syntax (`.yaml`, `.md`, `.js`, otherwise `.txt`) unless the note title already has one.
 - Settings (⌘,) adjusts background opacity, background black level (50–100%), font brightness, default font size (10.0–36.0 pt in 0.1 pt steps), and line-number visibility. Changes apply immediately to open and new tabs and persist locally. Changing the default size also sets the current size; temporary zoom leaves the default unchanged, and ⌘0 returns to it.
 - View → Background also offers transparency presets, kept in sync with Settings. The window uses native background blur; its appearance respects macOS transparency settings.
 
@@ -75,7 +77,7 @@ Everything lives in `~/Library/Application Support/untitled/`:
 ```text
 session.json        open tab order and selected tab
 notes/<UUID>.txt    plain UTF-8 text, one file per note
-notes/<UUID>.json   title, dates, archive status, cursor and optional original file path
+notes/<UUID>.json   title, dates, archive status, cursor, syntax choice and optional original file path
 ```
 
 Files are saved with atomic replacement. The app reconstructs notes from the individual text files if session or metadata files are missing/corrupt. Archive bodies are loaded on demand rather than held in memory. Search runs on demand in the background; there is no background polling or always-running indexer. File → Show Notes Folder reveals the data.

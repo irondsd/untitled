@@ -11,6 +11,8 @@ final class SyntaxHighlighter {
     private var brightness = 0.93
     private var spans: [SyntaxSpan] = []
     private(set) var language: NoteLanguage = .plain
+    /// A manually chosen format; nil follows automatic detection.
+    var override: NoteLanguage? { didSet { if override != oldValue { refresh() } } }
     private(set) var isHighlighting = false
 
     init(editor: NSTextView) {
@@ -33,11 +35,11 @@ final class SyntaxHighlighter {
         // TextKit adjusts existing temporary ranges while typing. Keep those colors
         // until the replacement result is ready, avoiding a flash on every keystroke.
         isHighlighting = true
-        let version = revision, snapshot = editor.string, token = FindCancellation()
+        let version = revision, snapshot = editor.string, forced = override, token = FindCancellation()
         cancellation = token
         let task = DispatchWorkItem { [weak self] in
             guard !token.isCancelled else { return }
-            let result = SyntaxEngine.analyze(snapshot, cancelled: { token.isCancelled })
+            let result = SyntaxEngine.analyze(snapshot, language: forced, cancelled: { token.isCancelled })
             guard !token.isCancelled else { return }
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.revision == version else { return }
