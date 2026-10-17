@@ -406,11 +406,75 @@ do {
     try check(forcedPlain.language == .plain && forcedPlain.spans.isEmpty, "choosing plain text removes highlighting")
     try check(SyntaxEngine.detectLanguage("name: api\nport: 80") == .yaml && SyntaxEngine.detectLanguage("hello there") == .plain,
         "detection alone reports the language")
-    try check(NoteLanguage.allCases.map(\.fileExtension) == ["txt", "sh", "css", "html", "js", "md", "xml", "yaml"], "each format suggests a file extension")
+    try check(NoteLanguage.allCases.map(\.fileExtension) == ["txt", "sh", "css", "html", "js", "json", "md", "xml", "yaml"], "each format suggests a file extension")
     func noOverlap(_ result: SyntaxResult, _ source: String) -> Bool {
         result.spans.allSatisfy { $0.range.location >= 0 && $0.range.length > 0 && NSMaxRange($0.range) <= (source as NSString).length }
             && zip(result.spans, result.spans.dropFirst()).allSatisfy { NSMaxRange($0.range) <= $1.range.location }
     }
+
+    let json = #"""
+    {
+      "名前 🧩": "café",
+      "escaped": "say \"hello\" \\ \/ \b \f \n \r \t \u0041",
+      "values": [true, false, null, -12, 0, 1.25, 6.02e+23, -2E-3],
+      "nested": {"text": "const x = 42; **bold** <script>not code</script>"}
+    }
+    """#
+    let jsonSyntax = SyntaxEngine.analyze(json)
+    try check(jsonSyntax.language == .json, "detects JSON independently of YAML and JavaScript")
+    for (needle, kind) in [("名前", SyntaxKind.key), ("escaped", .key), ("values", .key), ("café", .string),
+                           ("say", .string), ("const x", .string), ("true", .literal), ("false", .literal),
+                           ("null", .literal), ("-12", .number), ("1.25", .number), ("6.02e+23", .number),
+                           ("-2E-3", .number), ("{", .marker), ("[", .marker)] {
+        try check(kinds(jsonSyntax, json, at: needle) == [kind], "JSON token: \(needle)")
+    }
+    try check(noOverlap(jsonSyntax, json), "JSON tokens stay ordered, non-overlapping and within UTF-16 bounds")
+    for snippet in ["{}", "[]", "{\"a\":1}", "[1, 2, 3]", "[true,false,null]", "[[[]],{}]",
+                    "{\"empty\":{\"array\":[]}}", "\u{FEFF}{\r\n\"名前🧩\": \"雪\"\r\n}",
+                    "{\"key\":", "{\"key\": \"unfinished", "{\"key\": tru", "[1.2e-", "[null, {\"x\": ["] {
+        try check(SyntaxEngine.analyze(snippet).language == .json, "detects complete or unfinished JSON: \(snippet.debugDescription)")
+    }
+    let jsonAsStrings = #"{"true": "false", "123": "null", "punctuation": "{}[]:,", "quote": "\"key\": 1"}"#
+    let stringSyntax = SyntaxEngine.analyze(jsonAsStrings)
+    try check(kinds(stringSyntax, jsonAsStrings, at: "true") == [.key]
+        && kinds(stringSyntax, jsonAsStrings, at: "123") == [.key]
+        && kinds(stringSyntax, jsonAsStrings, at: "false") == [.string]
+        && kinds(stringSyntax, jsonAsStrings, at: "{}[]:,") == [.string]
+        && kinds(stringSyntax, jsonAsStrings, at: "key") == [.string], "JSON protects quoted values and escaped quotes from other tokens")
+    for (snippet, language) in [
+        ("{name: api, enabled: true}", NoteLanguage.yaml),
+        ("data: |\n  {\"enabled\": true}", .yaml),
+        ("```json\n{\"enabled\": true}\n```", .markdown),
+        ("# JSON\n\n{\"enabled\": true}", .markdown),
+        ("const config = {\"enabled\": true};", .javascript),
+        ("{\"run\": () => true}", .javascript),
+        ("<script type=\"application/json\">{\"enabled\":true}</script>", .html),
+        ("body { color: red; }", .css),
+        ("An ordinary note about JSON.", .plain),
+        ("true", .plain), ("42", .plain), ("\"a string\"", .plain)
+    ] {
+        try check(SyntaxEngine.analyze(snippet).language == language, "JSON detection respects other formats: \(snippet.prefix(32).debugDescription)")
+    }
+    for snippet in ["[value]", "{\"key\": undefined}", "{\"key\": NaN}", "[1,2].map(x => x)",
+                    "{\"key\": 0xFF}", "{\"key\": 01}", "{\"key\": 1n}", "{\"key\": true};", "[1 2]",
+                    "{\"x\" true}", "{\"x\":]", #"{"x":"\q"}"#, #"{"x":"\uXYZW"}"#] {
+        try check(JSONSyntax.confidence(in: SyntaxSource(snippet)) == 0, "non-JSON tokens do not become JSON evidence: \(snippet.debugDescription)")
+    }
+    for snippet in [json, "{\"x\":\"🧩\r\nnext", "{\"x\":\"escape\\", #"{"x":"\u12"#, "{\"x\": -", "{\"x\": 1.",
+                    "[nul", "{\"x\": }", "\"literal\"", "{\"bad\":\"\\q\"}"] {
+        try check(noOverlap(SyntaxEngine.analyze(snippet, language: .json), snippet), "manual JSON handles unfinished or invalid edits: \(snippet.prefix(28).debugDescription)")
+    }
+    try check(SyntaxEngine.analyze("true", language: .json).spans.first?.kind == .literal,
+        "manual JSON supports scalar documents without detecting ordinary scalar notes")
+    let largeJSON = "{\"items\":[" + String(repeating: "{\"name\":\"🧩\",\"value\":123},", count: 2000) + "null]}"
+    try check(SyntaxEngine.analyze(largeJSON).language == .json, "JSON detection survives a sample ending inside a large document")
+    try check(SyntaxEngine.analyze(String(repeating: "[", count: 1000) + "0" + String(repeating: "]", count: 1000)).language == .json,
+        "deep JSON nesting uses bounded iterative parser state")
+    var jsonWork = 0
+    let cancelledJSON = SyntaxEngine.analyze(largeJSON, language: .json, cancelled: { jsonWork += 1; return jsonWork > 100 })
+    try check(cancelledJSON.spans.isEmpty && jsonWork > 100, "JSON scanning checks cancellation during work")
+    try loaded.setSyntax(first, language: .json)
+    try check(try NotesStore(root: root).records[first]?.syntaxOverride == .json, "JSON menu choice persists in note metadata")
 
     // JSX and TSX share the JavaScript format.
     let tsx = #"""

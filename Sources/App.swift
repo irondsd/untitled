@@ -422,6 +422,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             return
         }
         let data = try Data(contentsOf: url)
+        if data.starts(with: Array("bplist00".utf8)) {
+            throw NSError(domain: "untitled", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                "This is a binary property list. Open an XML/text version of the plist instead."])
+        }
         guard !data.starts(with: [0x00]),
               let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .utf16),
               !text.contains("\0") else {

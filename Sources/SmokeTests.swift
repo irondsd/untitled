@@ -734,7 +734,7 @@ extension AppDelegate {
                 try restore(scriptID)
                 try await waitForSyntax(editors[scriptID]!)
                 try check(editors[scriptID]!.syntax.language == .yaml, "chosen format survives archiving and restoring")
-                try check(["Plain Text", "Bash", "CSS", "HTML", "JavaScript / TypeScript", "Markdown", "XML", "YAML"].allSatisfy { title in
+                try check(["Plain Text", "Bash", "CSS", "HTML", "JavaScript / TypeScript", "JSON", "Markdown", "XML", "YAML"].allSatisfy { title in
                     syntaxMenu.items.contains { $0.title == title } }, "Syntax menu lists every format")
                 chooseSyntax("HTML")
                 try await waitForSyntax(editors[scriptID]!)
@@ -742,6 +742,10 @@ extension AppDelegate {
                 chooseSyntax("CSS")
                 try await waitForSyntax(editors[scriptID]!)
                 try check(editors[scriptID]!.syntax.language == .css, "Syntax menu can force CSS")
+                chooseSyntax("JSON")
+                try await waitForSyntax(editors[scriptID]!)
+                try check(editors[scriptID]!.syntax.language == .json && store.records[scriptID]?.syntaxOverride == .json,
+                    "Syntax menu can force JSON")
                 chooseSyntax("Plain Text")
                 try await waitForSyntax(editors[scriptID]!)
                 try check(editors[scriptID]!.syntax.language == .plain && editors[scriptID]!.textView.layoutManager?
@@ -751,6 +755,51 @@ extension AppDelegate {
                 syntaxMenu.update()
                 try check(editors[scriptID]!.syntax.language == .javascript && store.records[scriptID]?.syntax == nil
                     && syntaxMenu.items.first!.title.contains("JavaScript"), "Detect Automatically returns to the detected format")
+                // Open real file fixtures only inside the disposable test folder.
+                let jsonURL = store.root.appendingPathComponent("example.json")
+                let jsonText = "{\"name\":\"🧩\",\"enabled\":true,\"count\":42}"
+                try jsonText.write(to: jsonURL, atomically: true, encoding: .utf8)
+                try openFile(jsonURL)
+                let jsonID = currentID!, jsonPane = editors[currentID!]!
+                try await waitForSyntax(jsonPane)
+                let jsonManager = jsonPane.textView.layoutManager!
+                let keyColor = jsonManager.temporaryAttribute(.foregroundColor, atCharacterIndex: 2, effectiveRange: nil) as? NSColor
+                let valueOffset = (jsonText as NSString).range(of: "🧩").location
+                let valueColor = jsonManager.temporaryAttribute(.foregroundColor, atCharacterIndex: valueOffset, effectiveRange: nil) as? NSColor
+                try check(jsonPane.syntax.language == .json && keyColor != nil && valueColor != nil && keyColor != valueColor,
+                    "opened JSON colors keys and string values differently")
+                jsonPane.textView.insertText("43", replacementRange: (jsonText as NSString).range(of: "42"))
+                try await waitForSyntax(jsonPane)
+                try flush()
+                try check(try String(contentsOf: jsonURL, encoding: .utf8) == jsonText, "JSON autosave preserves the external source")
+                jsonPane.textView.undoManager?.undo()
+                try await waitForSyntax(jsonPane)
+                try check(jsonPane.textView.string == jsonText, "JSON highlighting preserves native edit undo")
+                jsonPane.textView.undoManager?.redo()
+                try await waitForSyntax(jsonPane)
+                try store.setSyntax(jsonID, language: .json)
+                try close(jsonID)
+                try restore(jsonID)
+                try await waitForSyntax(editors[jsonID]!)
+                try check(editors[jsonID]!.syntax.language == .json && store.records[jsonID]?.syntaxOverride == .json,
+                    "JSON and its manual choice survive archive restoration")
+                let plistURL = store.root.appendingPathComponent("example.plist")
+                let plistText = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict><key>Name</key><string>Untitled</string></dict></plist>"
+                try plistText.write(to: plistURL, atomically: true, encoding: .utf8)
+                try openFile(plistURL)
+                let plistID = currentID!
+                try await waitForSyntax(editors[plistID]!)
+                try check(editors[plistID]!.syntax.language == .xml && editors[plistID]!.textView.string == plistText,
+                    "XML plist files open as unchanged XML source")
+                let binaryURL = store.root.appendingPathComponent("binary.plist")
+                let binaryData = try PropertyListSerialization.data(fromPropertyList: ["name": "Untitled"], format: .binary, options: 0)
+                try binaryData.write(to: binaryURL)
+                let beforeBinary = store.session.openIDs
+                var binaryError = ""
+                do { try openFile(binaryURL) } catch { binaryError = error.localizedDescription }
+                try check(binaryError.contains("binary property list") && store.session.openIDs == beforeBinary && currentID == plistID,
+                    "binary plists report a specific error without opening a text tab")
+                try check(try Data(contentsOf: binaryURL) == binaryData, "rejecting a binary plist leaves its file intact")
                 // Long notes color only the visible text and a margin, and repaint as they scroll.
                 newTab(nil)
                 let longID = currentID!, longPane = editors[currentID!]!, longView = editors[currentID!]!.textView
