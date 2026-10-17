@@ -13,6 +13,30 @@ extension AppDelegate {
                 try check(CommandLine.arguments.contains("--data-dir"), "isolated test storage")
                 let first = currentID!
                 let pane = editors[first]!
+                try check(pane.textView is EditorTextView, "editor uses repeat-aware paste handling")
+                let pastePress = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+                    timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                    characters: "v", charactersIgnoringModifiers: "v", isARepeat: false, keyCode: 9)!
+                let pasteRepeat = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+                    timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                    characters: "v", charactersIgnoringModifiers: "v", isARepeat: true, keyCode: 9)!
+                try check(!EditorTextView.discardsPasteRepeat(pastePress, modifiers: [], keyIsDown: { _ in false }),
+                    "a quick paste still works after both keys have been released")
+                try check(!EditorTextView.discardsPasteRepeat(pasteRepeat, modifiers: .command, keyIsDown: { $0 == 9 }),
+                    "holding Command and V continues repeated pasting")
+                try check(EditorTextView.discardsPasteRepeat(pasteRepeat, modifiers: [], keyIsDown: { _ in true }),
+                    "queued paste repeats stop when Command is released")
+                try check(EditorTextView.discardsPasteRepeat(pasteRepeat, modifiers: .command, keyIsDown: { _ in false }),
+                    "queued paste repeats stop when V is released")
+                try check(EditorTextView.discardsPasteRepeat(pasteRepeat, modifiers: [], keyIsDown: { _ in false }),
+                    "a backlog of paste repeats is ignored after both keys are released")
+                try check(!EditorTextView.discardsPasteRepeat(nil, modifiers: [], keyIsDown: { _ in false }),
+                    "menu and programmatic pastes do not depend on held keys")
+                let otherRepeat = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+                    timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                    characters: "z", charactersIgnoringModifiers: "z", isARepeat: true, keyCode: 6)!
+                try check(!EditorTextView.discardsPasteRepeat(otherRepeat, modifiers: [], keyIsDown: { _ in false }),
+                    "paste filtering leaves other repeated shortcuts alone")
                 pane.textView.insertText("First note — preserved 📝\nsecond line", replacementRange: pane.textView.selectedRange())
                 try flush()
                 try check(try store.text(first) == pane.textView.string, "native typing persisted")

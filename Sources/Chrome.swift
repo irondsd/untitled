@@ -192,7 +192,7 @@ final class EditorPane {
         scroll.autohidesScrollers = true
         scroll.scrollerStyle = .overlay
         // A separate text system per open tab preserves its own selection and undo history.
-        textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        textView = EditorTextView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         lineNumbers = LineNumberRuler(scrollView: scroll, textView: textView)
         textView.isRichText = false
         textView.importsGraphics = false

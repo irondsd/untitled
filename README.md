@@ -24,6 +24,7 @@ The result is `build/untitled.app`. Copy it to Applications if you want; it runs
 - The red window button hides the window without archiving its tabs. Click the Dock icon to show it again.
 - Automatic saving follows edits after a 0.4-second pause, and runs before tab switches, closing, app deactivation, and quitting. A sudden crash can lose the last unsaved fraction of a second.
 - Open tabs, their order, selected tab, titles, cursor position, and scroll position survive relaunch. Undo history is retained while a tab stays open, but not across app restarts or archiving.
+- Holding ⌘V repeats pasting while the keys remain held. Queued repeat pastes are discarded after releasing V or Command; a single quick paste still works.
 - Line numbers count real logical lines; soft-wrapped rows share a line number. Word wrapping and native find are included. Syntax highlighting and detection are intentionally not included yet.
 - Settings (⌘,) adjusts background opacity, background black level (50–100%), font brightness, default font size (10.0–36.0 pt in 0.1 pt steps), and line-number visibility. Changes apply immediately to open and new tabs and persist locally. Changing the default size also sets the current size; temporary zoom leaves the default unchanged, and ⌘0 returns to it.
 - View → Background also offers transparency presets, kept in sync with Settings. The window uses native background blur; its appearance respects macOS transparency settings.
@@ -88,3 +89,5 @@ Version 0.1.2 passed 45 storage/line-index checks and 64 native integration chec
 
 Version 0.1.3 clips the line-number gutter below the title bar, separates background black level from opacity, and replaces the font-size dropdown with a decimal field and stepper.
 The update passed 66 native integration checks; the clipped gutter, decimal entry/stepper, maximum font size, and independent background slider were also verified in the running preview.
+
+Version 0.1.4 filters queued auto-repeat paste commands using the current key state, while preserving completed single presses and menu paste actions. It passed 74 native checks, including release of either key, continuing repeats while both keys are held, and preservation of other shortcuts. Autosave timing is unchanged.
