@@ -10,7 +10,15 @@ Requires macOS 13+ and Apple's Command Line Tools (`xcode-select --install`). A 
 ./build.sh --run
 ```
 
-The result is `build/untitled.app`. Copy it to Applications if you want; it runs independently of the source directory. The build script signs it locally with an ad hoc signature. This is a personal/local build, not a notarized public release.
+The result is `build/untitled.app`. To also install it, run `./build.sh --install` (add `--run` to open the installed copy). This replaces `/Applications/untitled.app` after checking it is this app and is not running; set `INSTALL_DIR` to install elsewhere, such as `~/Applications`. The installed app runs independently of the source directory and uses the same notes as the local build, so run only one copy at a time. The build script signs it locally with an ad hoc signature. This is a personal/local build, not a notarized public release.
+
+### Command line
+
+`unt` opens files from the shell, like `subl`: `unt notes.md config.yaml` opens each file as a tab (or focuses its existing tab), launching the app if needed. With no arguments it brings untitled to the front. It uses `/Applications/untitled.app` (so it follows `./build.sh --install`), then `~/Applications/untitled.app`, then the local `build/untitled.app` next to the script; set `UNTITLED_APP` to use another copy. Missing files and directories are rejected. To put it on your `PATH`, link it rather than copying it, so it can still find the local build:
+
+```sh
+ln -s "$PWD/unt" ~/bin/unt
+```
 
 To regenerate the existing app icon, run `./make-icon.sh`, then `./build.sh`. The icon script renders the ten standard/Retina sizes from `MakeIcon.swift` and packages them with Apple's `iconutil`. Keep this packaging step: manually placing PNGs in the small ICNS representation slots can produce scrambled icons in Finder and Activity Monitor even when the Dock looks correct.
 

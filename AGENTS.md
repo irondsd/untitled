@@ -12,4 +12,4 @@ This is a native macOS scratchpad built with Swift and AppKit. Read README.md be
 - AppKit scroll views in the full-size title bar must disable automatic content insets so tab buttons receive mouse input.
 - Tab labels and the single-note title support window dragging without sacrificing clicks or context menus. Native line numbers count logical lines, never wrapped rows; keep the cached line index incremental and draw only visible labels.
 - Draw line numbers using the typesetter's font baseline rather than individual glyph metrics; newline/control glyphs otherwise make numbers jump. Active tabs share the body background and inactive tabs are darker.
-- Public distribution and installation into Applications are separate from the local build.
+- Installing into Applications is opt-in via `./build.sh --install`; a plain build never installs. Public distribution is separate from the local build.

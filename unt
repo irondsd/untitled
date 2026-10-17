@@ -1,0 +1,32 @@
+#!/bin/bash
+# Open files in untitled from the shell: unt [file ...]
+# With no files, brings untitled to the front.
+set -euo pipefail
+
+# Prefer an installed copy, then the local build next to this script (symlinks resolved).
+find_app() {
+  if [ -n "${UNTITLED_APP:-}" ]; then echo "$UNTITLED_APP"; return; fi
+  for app in /Applications/untitled.app "$HOME/Applications/untitled.app"; do
+    if [ -d "$app" ]; then echo "$app"; return; fi
+  done
+  local source="${BASH_SOURCE[0]}"
+  while [ -L "$source" ]; do
+    local dir; dir="$(cd -P "$(dirname "$source")" && pwd)"
+    source="$(readlink "$source")"
+    [[ "$source" != /* ]] && source="$dir/$source"
+  done
+  echo "$(cd -P "$(dirname "$source")" && pwd)/build/untitled.app"
+}
+
+app="$(find_app)"
+if [ ! -d "$app" ]; then
+  echo "unt: untitled.app not found at $app (run ./build.sh or set UNTITLED_APP)" >&2
+  exit 1
+fi
+
+for file in "$@"; do
+  if [ -d "$file" ]; then echo "unt: $file is a directory" >&2; exit 1; fi
+  if [ ! -e "$file" ]; then echo "unt: $file does not exist" >&2; exit 1; fi
+done
+
+exec open -a "$app" "$@"
