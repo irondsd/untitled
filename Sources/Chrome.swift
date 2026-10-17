@@ -219,8 +219,8 @@ final class EditorPane {
         textView.isAutomaticLinkDetectionEnabled = false
         textView.isAutomaticDataDetectionEnabled = false
         textView.smartInsertDeleteEnabled = false
-        textView.usesFindBar = true
-        textView.isIncrementalSearchingEnabled = true
+        textView.usesFindBar = false
+        textView.isIncrementalSearchingEnabled = false
         textView.setAccessibilityLabel("Note text")
         textView.string = text
         applyFont(size: fontSize)
@@ -242,6 +242,7 @@ final class EditorPane {
         let insets = scroll.contentView.contentInsets
         let width = max(0, scroll.contentSize.width - insets.left - insets.right)
         textView.setFrameSize(NSSize(width: width, height: max(textView.frame.height, scroll.contentSize.height)))
+        textView.setFrameOrigin(.zero)
         scroll.contentView.scroll(to: NSPoint(x: -insets.left, y: scroll.contentView.bounds.minY))
         scroll.reflectScrolledClipView(scroll.contentView)
     }

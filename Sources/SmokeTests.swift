@@ -3,7 +3,8 @@ import AppKit
 extension AppDelegate {
     /// Runs only against the explicitly supplied disposable data folder.
     func runSmokeTests() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in
+        Task { @MainActor [self] in
+            try? await Task.sleep(nanoseconds: 500_000_000)
             var checks: [String] = []
             func check(_ condition: @autoclosure () throws -> Bool, _ name: String) throws {
                 guard try condition() else { throw NSError(domain: "SmokeTest", code: 1, userInfo: [NSLocalizedDescriptionKey: name]) }
@@ -248,6 +249,282 @@ extension AppDelegate {
                 try check(settingsController?.window?.isVisible == false, "Settings closes normally")
                 try check(store.session.openIDs == openIDsBeforeClose, "closing Settings leaves notes open")
                 applyPreferences(oldPreferences)
+                // Find uses the real text system and disposable notes, including native undo.
+                newTab(nil)
+                let findID = currentID!
+                let findPane = editors[findID]!
+                let findView = findPane.textView
+                let fixture = "📝 Cat cat CAT\nname=Alice\nname=Bob\n"
+                findView.insertText(fixture, replacementRange: findView.selectedRange())
+                findView.setSelectedRange(NSRange(location: 0, length: 0))
+                // AppKit can intercept synthetic Find key equivalents in an inactive app.
+                // Check the binding and dispatch its menu action; physical Command-F is also
+                // verified in the isolated active preview.
+                let findMenu = NSApp.mainMenu!.items.first { $0.title == "Edit" }!.submenu!
+                let findItem = findMenu.items.first { $0.keyEquivalent == "f" && $0.keyEquivalentModifierMask == .command }!
+                let findHandled = NSApp.sendAction(findItem.action!, to: findItem.target, from: findItem)
+                try check(findHandled && findController.isVisible, "Command-F menu binding opens custom bottom find panel")
+                @MainActor func waitForFind() async throws {
+                    let deadline = Date().addingTimeInterval(5)
+                    while findController.isSearching && Date() < deadline {
+                        try await Task.sleep(nanoseconds: 10_000_000)
+                    }
+                    try check(!findController.isSearching, "live search finishes")
+                }
+                @MainActor func search(_ text: String, regex: Bool = false, sensitive: Bool = false, all: Bool = false) async throws {
+                    findController.panel.findField.stringValue = text
+                    findController.panel.regexButton.state = regex ? .on : .off
+                    findController.panel.caseButton.state = sensitive ? .on : .off
+                    findController.panel.allButton.state = all ? .on : .off
+                    findController.optionsChanged()
+                    try await waitForFind()
+                }
+                try await search("cat")
+                try check(findController.control(findController.panel.findField, textView: findView, doCommandBy: #selector(NSResponder.insertTab(_:)))
+                    && findController.panel.replaceField.currentEditor() != nil, "Tab from Find focuses replacement field")
+                try check(findController.control(findController.panel.replaceField, textView: findView, doCommandBy: #selector(NSResponder.insertBacktab(_:)))
+                    && findController.panel.findField.currentEditor() != nil, "Shift-Tab from Replace focuses find field")
+                try check(findController.results?.matches.count == 3, "live find previews every case-insensitive match")
+                try check(findView.layoutManager?.temporaryAttribute(.backgroundColor, atCharacterIndex: 3, effectiveRange: nil) != nil,
+                    "live preview uses temporary highlighting")
+                try check(!findPane.dirty || findView.string == fixture, "preview does not alter note text")
+                try flush()
+                try await search("cat", sensitive: true)
+                try check(findController.results?.matches.count == 1 && !findPane.dirty, "case toggle refreshes matches without dirtying note")
+                findController.find()
+                try check(findView.selectedRange() == NSRange(location: 7, length: 3), "Find selects the next matching range")
+                try await search("cat")
+                findController.navigate()
+                try check(findView.selectedRange().location == 11, "Find Next advances from selected match")
+                findController.navigate()
+                try check(findView.selectedRange().location == 3, "Find Next wraps at end of note")
+                findController.navigate(backwards: true)
+                try check(findView.selectedRange().location == 11, "Find Previous wraps at start of note")
+                try await search("cat", all: true)
+                findController.find()
+                try check(findView.selectedRanges.count == 3 && findController.panel.findButton.title == "Find All", "All selects all matches and changes action labels")
+                try await search("name=(\\w+)", regex: true, all: true)
+                findController.panel.replaceField.stringValue = "$1: $0\\n"
+                findView.breakUndoCoalescing()
+                findController.replace()
+                try await waitForFind()
+                let replacedFixture = "📝 Cat cat CAT\nAlice: name=Alice\n\nBob: name=Bob\n\n"
+                try check(findView.string == replacedFixture && findPane.dirty, "Replace All expands regex captures and escapes through native editing")
+                try check(findPane.lineNumbers.lines.starts == LogicalLines(replacedFixture).starts, "bulk replacement keeps incremental line numbers correct")
+                findView.undoManager?.undo()
+                try await waitForFind()
+                try check(findView.string == fixture, "one undo restores the complete Replace All operation")
+                findView.undoManager?.redo()
+                try await waitForFind()
+                try check(findView.string == replacedFixture, "redo reapplies the complete Replace All operation")
+                findView.undoManager?.undo()
+                try await waitForFind()
+                try await search("cat")
+                findController.panel.replaceField.stringValue = "dog"
+                findView.setSelectedRange(NSRange(location: 0, length: 0))
+                findController.replace()
+                try check(findView.string == fixture && findView.selectedRange().location == 3, "Replace first finds a match when selection does not match")
+                findController.replace()
+                try await waitForFind()
+                try check(findView.string == "📝 dog cat CAT\nname=Alice\nname=Bob\n" && findView.selectedRange().location == 7,
+                    "Replace changes one match and selects the next")
+                findView.undoManager?.undo()
+                try await waitForFind()
+                try check(findView.string == fixture, "single replacement is undoable independently")
+                try await search("(", regex: true)
+                try check(findController.results == nil && !findController.panel.replaceButton.isEnabled && findController.panel.status.stringValue.contains("Invalid regex"),
+                    "invalid regex appears inline and disables replacement")
+                findController.replace()
+                try check(findView.string == fixture, "invalid regex cannot change the note")
+                try await search("name=(\\w+)", regex: true)
+                findController.panel.replaceField.stringValue = "$9"
+                findController.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: findController.panel.replaceField))
+                try check(!findController.panel.replaceButton.isEnabled && findController.panel.status.stringValue.contains("No capture group"),
+                    "invalid replacement references appear inline")
+                try await search("$", regex: true, all: true)
+                findController.find()
+                try check(!findView.selectedRanges.isEmpty && !(findView as! EditorTextView).zeroWidthFindLocations.isEmpty,
+                    "Find All handles empty regex matches with visible markers")
+                findController.panel.replaceField.stringValue = "!"
+                findController.replace()
+                try await waitForFind()
+                try check(findView.string.contains("CAT!\n") && findView.string.hasSuffix("!"), "Replace All handles zero-width line and end-of-note matches")
+                findView.undoManager?.undo()
+                try await waitForFind()
+                try check(findView.string == fixture, "zero-width Replace All undoes in one step")
+                try await search("cat")
+                let priorEditor = findView
+                newTab(nil)
+                try await waitForFind()
+                try check(findController.isVisible && findController.results?.matches.isEmpty == true, "open find panel follows newly selected note")
+                try switchTab(findID)
+                try await waitForFind()
+                try check(editors[findID]?.textView === priorEditor && findController.results?.matches.count == 3, "switching back retains editor and refreshes find preview")
+                findController.panel.findField.stringValue = "never matches"
+                findController.refresh()
+                findController.panel.findField.stringValue = "cat"
+                findController.refresh()
+                try await waitForFind()
+                try check(findController.results?.query.text == "cat" && findController.results?.matches.count == 3, "obsolete asynchronous searches cannot overwrite newer results")
+                let panel = findController.panel
+                for width: CGFloat in [420, 960] {
+                    panel.setFrameSize(NSSize(width: width, height: FindPanel.height))
+                    panel.layoutSubtreeIfNeeded()
+                    try check(panel.findField.frame.maxX < panel.findButton.frame.minX && panel.findButton.frame.maxX < panel.regexButton.frame.minX && panel.allButton.frame.maxX <= width,
+                        "find controls fit window width \(Int(width))")
+                }
+                try check(findController.control(panel.findField, textView: findView, doCommandBy: #selector(NSResponder.cancelOperation(_:))) && !findController.isVisible,
+                    "Escape in find field closes the panel")
+                try check(findView.layoutManager?.temporaryAttribute(.backgroundColor, atCharacterIndex: 3, effectiveRange: nil) == nil,
+                    "closing find clears preview highlighting")
+                showFind()
+                try await waitForFind()
+                findView.cancelOperation(nil)
+                try check(!findController.isVisible, "Escape in editor also closes the find panel")
+                newTab(nil)
+                let occurrenceID = currentID!
+                let occurrencePane = editors[occurrenceID]!
+                let occurrenceView = occurrencePane.textView
+                let occurrenceFixture = "📝 KSHA ksha KSHA KSHA-long\na.b aXb a.b\n"
+                occurrenceView.insertText(occurrenceFixture, replacementRange: occurrenceView.selectedRange())
+                occurrencePane.layoutEditor()
+                try check(occurrenceView.frame.origin == .zero, "short notes stay anchored at the top of the editor")
+                occurrenceView.breakUndoCoalescing()
+                try flush()
+                occurrenceView.undoManager?.removeAllActions() // Fixture creation is not part of the editing action under test.
+                @MainActor func waitForOccurrences() async throws {
+                    // Native undo groups close at the next event-loop turn, even when
+                    // no selection remains to trigger a background matching job.
+                    try await Task.sleep(nanoseconds: 10_000_000)
+                    let deadline = Date().addingTimeInterval(5)
+                    while occurrenceController.isSearching && Date() < deadline {
+                        try await Task.sleep(nanoseconds: 10_000_000)
+                    }
+                    try check(!occurrenceController.isSearching, "selection matching finishes")
+                }
+                occurrenceView.setSelectedRange(NSRange(location: 13, length: 4))
+                try await waitForOccurrences()
+                try check(occurrenceController.matches?.ranges.map(\.location) == [3, 13, 18] && !findController.isVisible,
+                    "selected text highlights matching case-sensitive occurrences without Find")
+                try check(occurrenceView.layoutManager?.temporaryAttribute(.backgroundColor, atCharacterIndex: 3, effectiveRange: nil) != nil
+                    && occurrenceView.layoutManager?.temporaryAttribute(.backgroundColor, atCharacterIndex: 8, effectiveRange: nil) == nil,
+                    "selection preview highlights exact repeats but not different case")
+                try check(!occurrencePane.dirty && occurrenceView.string == occurrenceFixture,
+                    "occurrence highlighting does not dirty or change the note")
+                let occurrenceItem = findMenu.items.first { $0.keyEquivalent == "d" && $0.keyEquivalentModifierMask == .command }!
+                window.makeFirstResponder(occurrenceView)
+                try check(NSApp.sendAction(occurrenceItem.action!, to: occurrenceItem.target, from: occurrenceItem), "Command-D menu binding dispatches select next occurrence")
+                try await waitForOccurrences()
+                try check(occurrenceView.selectedRanges.map(\.rangeValue.location) == [13, 18], "Command-D adds the next occurrence and keeps the first")
+                selectNextOccurrence()
+                try check(occurrenceView.selectedRanges.map(\.rangeValue.location) == [3, 13, 18], "Command-D wraps and retains all earlier selections")
+                selectNextOccurrence()
+                try check(occurrenceView.selectedRanges.count == 3 && !findController.isVisible, "Command-D stops adding when all occurrences are selected")
+                occurrenceView.insertText("item", replacementRange: NSRange(location: NSNotFound, length: 0))
+                try await waitForOccurrences()
+                try check(occurrenceView.string == "📝 item ksha item item-long\na.b aXb a.b\n", "native typing replaces every selected occurrence")
+                occurrenceView.undoManager?.undo()
+                try await waitForOccurrences()
+                try check(occurrenceView.string == occurrenceFixture, "one undo restores multi-selection typing; actual: \(String(reflecting: occurrenceView.string))")
+                occurrenceView.undoManager?.redo()
+                try await waitForOccurrences()
+                try check(occurrenceView.string == "📝 item ksha item item-long\na.b aXb a.b\n", "redo reapplies multi-selection typing")
+                occurrenceView.undoManager?.undo()
+                try await waitForOccurrences()
+                occurrenceView.setSelectedRange(NSRange(location: 4, length: 0))
+                try await waitForOccurrences()
+                selectNextOccurrence()
+                try await waitForOccurrences()
+                try check(occurrenceView.selectedRange() == NSRange(location: 3, length: 4), "Command-D at a caret first selects the native word")
+                selectNextOccurrence()
+                try await waitForOccurrences()
+                try check(occurrenceView.selectedRanges.count == 2, "a second Command-D adds a matching word")
+                occurrenceView.cancelOperation(nil)
+                try check(occurrenceView.selectedRanges.count == 1, "Escape exits multiple selections without opening Find")
+                occurrenceView.setSelectedRange(NSRange(location: 0, length: 0))
+                try await waitForOccurrences()
+                try check(occurrenceController.matches == nil
+                    && occurrenceView.layoutManager?.temporaryAttribute(.backgroundColor, atCharacterIndex: 3, effectiveRange: nil) == nil,
+                    "clicking away clears occurrence highlights")
+                occurrenceView.setSelectedRange(NSRange(location: 3, length: 4))
+                selectNextOccurrence()
+                selectNextOccurrence()
+                try await waitForOccurrences()
+                try check(occurrenceView.selectedRanges.count == 3, "rapid Command-D presses queue while matching runs")
+                showFind()
+                try await waitForFind()
+                try check(findController.results?.matches.count == 4 && occurrenceController.matches == nil,
+                    "Find takes over highlighting and retains its independent case-insensitive behavior")
+                findController.close()
+                try await waitForOccurrences()
+                try check(occurrenceController.matches?.ranges.count == 3, "closing Find restores exact selection matching")
+                newTab(nil)
+                try await waitForOccurrences()
+                try check(occurrenceController.matches == nil, "switching to an empty note clears occurrence state")
+                try switchTab(occurrenceID)
+                try await waitForOccurrences()
+                try check(editors[occurrenceID]?.textView === occurrenceView && occurrenceView.selectedRanges.count == 3,
+                    "tab switches retain the editor and its multiple selections")
+                try check(occurrenceController.matches?.ranges.count == 3, "returning to a note restores occurrence preview")
+                newTab(nil)
+                let multiPane = editors[currentID!]!
+                let multiView = multiPane.textView
+                multiView.insertText("🐱 a 🐱", replacementRange: multiView.selectedRange())
+                multiView.selectedRanges = [NSValue(range: NSRange(location: 0, length: 2)), NSValue(range: NSRange(location: 5, length: 2))]
+                multiView.insertText("xy", replacementRange: NSRange(location: NSNotFound, length: 0))
+                try await waitForOccurrences()
+                try check(multiView.string == "xy a xy" && multiView.selectedRanges.count == 2, "multi-selection replacement retains both insertion points")
+                multiView.insertText("!", replacementRange: NSRange(location: NSNotFound, length: 0))
+                try await waitForOccurrences()
+                try check(multiView.string == "xy! a xy!", "continued typing inserts at every caret")
+                multiView.undoManager?.removeAllActions()
+                multiView.deleteBackward(nil)
+                try await waitForOccurrences()
+                try check(multiView.string == "xy a xy", "Backspace deletes at every caret")
+                multiView.undoManager?.undo()
+                try await waitForOccurrences()
+                try check(multiView.string == "xy! a xy!", "multi-caret deletion is undoable in one step")
+                multiView.undoManager?.redo()
+                try await waitForOccurrences()
+                try check(multiView.string == "xy a xy", "multi-caret deletion can be redone")
+                multiView.setSelectedRange(NSRange(location: 0, length: (multiView.string as NSString).length))
+                multiView.insertText("🐱 a 🐱", replacementRange: multiView.selectedRange())
+                multiView.selectedRanges = [NSValue(range: NSRange(location: 2, length: 0)), NSValue(range: NSRange(location: 7, length: 0))]
+                multiView.deleteBackward(nil)
+                try await waitForOccurrences()
+                try check(multiView.string == " a ", "multi-caret Backspace removes whole Unicode characters")
+                multiView.undoManager?.undo()
+                try await waitForOccurrences()
+                multiView.selectedRanges = [NSValue(range: NSRange(location: 0, length: 0)), NSValue(range: NSRange(location: 5, length: 0))]
+                multiView.deleteForward(nil)
+                try await waitForOccurrences()
+                try check(multiView.string == " a ", "multi-caret forward delete removes whole Unicode characters")
+                multiView.setSelectedRange(NSRange(location: 0, length: (multiView.string as NSString).length))
+                multiView.insertText("aaaa", replacementRange: multiView.selectedRange())
+                multiView.selectedRanges = [NSValue(range: NSRange(location: 0, length: 2)), NSValue(range: NSRange(location: 2, length: 2))]
+                multiView.insertText("b", replacementRange: NSRange(location: NSNotFound, length: 0))
+                try await waitForOccurrences()
+                try check(multiView.string == "bb", "adjacent selections each receive their own replacement")
+                // Save and restore every pasteboard type so tests leave the user's clipboard intact.
+                let clipboard = NSPasteboard.general
+                let clipboardItems = clipboard.pasteboardItems?.map { item -> NSPasteboardItem in
+                    let copy = NSPasteboardItem()
+                    for type in item.types { if let data = item.data(forType: type) { copy.setData(data, forType: type) } }
+                    return copy
+                } ?? []
+                do {
+                    defer { clipboard.clearContents(); if !clipboardItems.isEmpty { clipboard.writeObjects(clipboardItems) } }
+                    clipboard.clearContents()
+                    clipboard.setString("p\nq", forType: .string)
+                    multiView.selectedRanges = [NSValue(range: NSRange(location: 0, length: 1)), NSValue(range: NSRange(location: 1, length: 1))]
+                    multiView.paste(nil)
+                    try await waitForOccurrences()
+                    try check(multiView.string == "p\nqp\nq", "paste inserts multiline text into every selection")
+                }
+                try check(multiPane.lineNumbers.lines.starts == LogicalLines(multiView.string).starts,
+                    "multi-selection edits preserve the incremental line index")
+                try flush()
+                try check(try store.text(currentID!) == multiView.string, "multi-selection edits persist through normal autosave storage")
                 try flush()
                 let report: [String: Any] = ["passed": true, "checks": checks]
                 let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])

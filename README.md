@@ -25,7 +25,8 @@ The result is `build/untitled.app`. Copy it to Applications if you want; it runs
 - Automatic saving follows edits after a 0.4-second pause, and runs before tab switches, closing, app deactivation, and quitting. A sudden crash can lose the last unsaved fraction of a second.
 - Open tabs, their order, selected tab, titles, cursor position, and scroll position survive relaunch. Undo history is retained while a tab stays open, but not across app restarts or archiving.
 - Holding ⌘V repeats pasting while the keys remain held. Queued repeat pastes are discarded after releasing V or Command; a single quick paste still works.
-- Line numbers count real logical lines; soft-wrapped rows share a line number. Word wrapping and native find are included. Syntax highlighting and detection are intentionally not included yet.
+- Selecting text highlights exact repeats in the current note, with Find closed. ⌘D adds the next occurrence to the selection and wraps around; with a caret, the first ⌘D selects the word under it. Matching is literal and case-sensitive, independent of Find settings. Typing, paste, and deletion affect every selected occurrence, with native undo. Esc reduces multiple selections to one; clicking elsewhere clears the preview. Whitespace-only selections do not trigger highlighting.
+- Line numbers count real logical lines; soft-wrapped rows share a line number. Word wrapping and a native bottom find/replace panel are included. Syntax highlighting and detection are intentionally not included yet.
 - Settings (⌘,) adjusts background opacity, background black level (50–100%), font brightness, default font size (10.0–36.0 pt in 0.1 pt steps), and line-number visibility. Changes apply immediately to open and new tabs and persist locally. Changing the default size also sets the current size; temporary zoom leaves the default unchanged, and ⌘0 returns to it.
 - View → Background also offers transparency presets, kept in sync with Settings. The window uses native background blur; its appearance respects macOS transparency settings.
 
@@ -45,10 +46,23 @@ The result is `build/untitled.app`. Copy it to Applications if you want; it runs
 | ⌘O | Open text files |
 | ⌘S / ⇧⌘S | Save to an external file / Save As |
 | ⌘F / ⌘G / ⇧⌘G | Find / next / previous |
+| ⌘D | Select word / add next occurrence to selection |
+| ⌥⌘F | Focus replacement field |
+| Return / ⇧Return in Find | Find next / previous (wraps) |
+| Return in Replace | Replace selected match, then find next; All replaces every match |
+| Esc | Close find panel, or reduce multiple editor selections to one |
 | ⌘Z / ⇧⌘Z | Undo / redo |
 | ⌘+ / ⌘= / ⌘− / ⌘0 | Increase / increase / decrease / reset text size |
 | ⌃⌘F | Fullscreen |
 | ⌘Q | Save local notes and quit |
+
+## Find and replace
+
+⌘F opens two rows at the bottom: Find and Replace. The three switches on the right are `.*` (regular expressions), `Aa` (case sensitive), and `All` (Find All / Replace All). Search ignores case by default. All operates only on the current note. Matches highlight live regardless of the All switch, with a match count and inline errors for invalid expressions. Find All selects every match; next/previous still navigate individual matches. Empty regex matches are marked with a thin yellow bar.
+
+Regex uses Foundation's ICU expressions. Parentheses capture groups: finding `name=(\w+)` and replacing with `Hello, $1!` changes `name=Alice` to `Hello, Alice!`. `$0` inserts the whole match; `$1`, `$2`, etc. insert capture groups. Regex replacements also accept `\n`, `\r`, and `\t`; use `\$` for a literal dollar sign and `\\` for a literal backslash. In plain mode, replacement text is literal. `^` and `$` match line boundaries; use `\A` and `\z` for note boundaries, and `(?s)` when `.` should span newlines.
+
+Opening the panel prefills Find from selected text. Tab moves from Find to Replace; Shift-Tab moves back. Return finds the next match, Shift-Return finds the previous, and both wrap. Replace changes an exactly selected match and moves to the next; if none is selected, it selects the next match first. Replace All is one undo step, with ⌘Z / ⇧⌘Z undoing/redoing the replacement even while an input still has focus. Editing an input returns undo to that field. Searches run in the background and follow the selected tab while preserving each tab's editor and undo history. Esc or the close button clears highlights and returns focus to the note.
 
 ## Storage
 
@@ -79,7 +93,7 @@ build/untitled.app/Contents/MacOS/untitled --data-dir "$test_dir" --smoke-test
 cat "$test_dir/smoke-results.json"
 ```
 
-The UI smoke test exercises real NSTextView typing/undo, Command-T, tab switching, archiving, restoration and session persistence. `--data-dir` is only a test/development override.
+The UI smoke test exercises real NSTextView typing/undo, Command-T, tab switching, archiving, restoration, session persistence, and find/replace. The find update passes 58 storage/line-index/search checks and 129 native integration checks. Command-F, Return/Shift-Return, capture replacement, focused-input undo/redo, and Escape were also checked in a separately identified preview app using disposable notes. `--data-dir` is only a test/development override.
 
 The initial release passed 23 storage checks and 26 native integration checks. Mouse selection, right-click renaming, archive content search/restore, native Find and the single-note title bar were also checked in the running app. On the development Mac (Apple Silicon, macOS 15.4.1), the app bundle measured 0.67 MiB and a performance sample after editing/searching reported a 42.3 MiB physical footprint. These are small-note measurements, not limits or guarantees for large documents.
 

@@ -23,6 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     var preferences = EditorPreferences()
     var preferencesDefaults = UserDefaults.standard
     var settingsController: SettingsController?
+    let findController = FindController()
+    let occurrenceController = OccurrenceController()
     private var startupURLs: [URL] = []
     private let headerHeight: CGFloat = 38
     private var isSmokeTesting: Bool { CommandLine.arguments.contains("--smoke-test") }
@@ -89,6 +91,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         header.wantsLayer = true
         header.layer?.backgroundColor = NSColor.clear.cgColor
         root.addSubview(header)
+        root.addSubview(findController.panel)
+        findController.onVisibilityChange = { [weak self] in
+            guard let self else { return }
+            self.occurrenceController.setSuspended(self.findController.isVisible)
+            self.layoutWindow()
+        }
         tabScroll.drawsBackground = false
         tabScroll.automaticallyAdjustsContentInsets = false
         tabScroll.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
@@ -136,9 +144,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             tab.layoutSubtreeIfNeeded()
         }
         if let currentID, let pane = editors[currentID] {
-            pane.scroll.frame = NSRect(x: 0, y: headerHeight, width: root.bounds.width, height: max(0, root.bounds.height - headerHeight))
+            let findHeight = findController.isVisible ? FindPanel.height : 0
+            pane.scroll.frame = NSRect(x: 0, y: headerHeight, width: root.bounds.width, height: max(0, root.bounds.height - headerHeight - findHeight))
             pane.layoutEditor()
         }
+        findController.panel.frame = NSRect(x: 0, y: root.bounds.height - FindPanel.height, width: root.bounds.width, height: FindPanel.height)
         // Keep native traffic lights in the same compact row as the custom tabs.
         for (index, kind) in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].enumerated() {
             guard let button = window.standardWindowButton(kind), let host = button.superview else { continue }
@@ -194,6 +204,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         pane.scroll.reflectScrolledClipView(pane.scroll.contentView)
         rebuildTabs()
         window.makeFirstResponder(pane.textView)
+        findController.bind(pane.textView)
+        occurrenceController.bind(pane.textView)
     }
 
     func flush() throws {
@@ -237,11 +249,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     func textDidChange(_ notification: Notification) {
         guard let id = currentID, let pane = editors[id], notification.object as? NSTextView === pane.textView else { return }
         pane.dirty = true
+        findController.documentDidChange()
+        occurrenceController.documentDidChange()
         // Hashing the whole document belongs to the delayed save, not the typing path.
         window.isDocumentEdited = store.records[id]?.filePath != nil
         scheduleSave()
     }
-    func textViewDidChangeSelection(_ notification: Notification) { scheduleSave() }
+    func textViewDidChangeSelection(_ notification: Notification) {
+        scheduleSave()
+        if let id = currentID, notification.object as? NSTextView === editors[id]?.textView {
+            findController.selectionDidChange()
+            occurrenceController.selectionDidChange()
+        }
+    }
     func undoManager(for view: NSTextView) -> UndoManager? {
         editors.values.first { $0.textView === view }?.undo
     }
@@ -435,6 +455,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         ])
     }
 
+    @objc func showFind(_ sender: Any? = nil) { findController.show() }
+    @objc func selectNextOccurrence(_ sender: Any? = nil) {
+        guard let id = currentID, let editor = editors[id]?.textView, window.firstResponder === editor else { return }
+        if findController.isVisible { findController.close() }
+        occurrenceController.selectNext()
+    }
+    @objc private func showReplace(_ sender: Any?) { findController.show(focusReplacement: true) }
+    @objc private func findNext(_ sender: Any?) {
+        findController.navigate()
+    }
+    @objc private func findPrevious(_ sender: Any?) {
+        findController.navigate(backwards: true)
+    }
+    @objc private func undoEditing(_ sender: Any?) {
+        if NSApp.keyWindow === window, let manager = findController.panelUndoManager { manager.undo() }
+        else { NSApp.sendAction(Selector(("undo:")), to: nil, from: sender) }
+    }
+    @objc private func redoEditing(_ sender: Any?) {
+        if NSApp.keyWindow === window, let manager = findController.panelUndoManager { manager.redo() }
+        else { NSApp.sendAction(Selector(("redo:")), to: nil, from: sender) }
+    }
+
     private func buildMenus() {
         let main = NSMenu()
         NSApp.mainMenu = main
@@ -479,20 +521,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         file.addItem(.separator())
         item(file, "Show Notes Folder", #selector(revealStorage), target: self)
         let edit = submenu("Edit")
-        item(edit, "Undo", Selector(("undo:")), "z")
-        item(edit, "Redo", Selector(("redo:")), "z", [.command, .shift])
+        item(edit, "Undo", #selector(undoEditing), "z", target: self)
+        item(edit, "Redo", #selector(redoEditing), "z", [.command, .shift], target: self)
         edit.addItem(.separator())
         item(edit, "Cut", #selector(NSText.cut(_:)), "x")
         item(edit, "Copy", #selector(NSText.copy(_:)), "c")
         item(edit, "Paste", #selector(NSText.paste(_:)), "v")
         item(edit, "Select All", #selector(NSText.selectAll(_:)), "a")
+        item(edit, "Select Next Occurrence", #selector(selectNextOccurrence), "d", target: self)
         edit.addItem(.separator())
-        let find = item(edit, "Find…", #selector(NSResponder.performTextFinderAction(_:)), "f")
-        find.tag = NSTextFinder.Action.showFindInterface.rawValue
-        let next = item(edit, "Find Next", #selector(NSResponder.performTextFinderAction(_:)), "g")
-        next.tag = NSTextFinder.Action.nextMatch.rawValue
-        let previous = item(edit, "Find Previous", #selector(NSResponder.performTextFinderAction(_:)), "g", [.command, .shift])
-        previous.tag = NSTextFinder.Action.previousMatch.rawValue
+        item(edit, "Find and Replace…", #selector(showFind), "f", target: self)
+        item(edit, "Replace…", #selector(showReplace), "f", [.command, .option], target: self)
+        item(edit, "Find Next", #selector(findNext), "g", target: self)
+        item(edit, "Find Previous", #selector(findPrevious), "g", [.command, .shift], target: self)
         let view = submenu("View")
         item(view, "Increase Text Size", #selector(increaseFont), "+", target: self)
         let increaseAlternate = item(view, "Increase Text Size", #selector(increaseFont), "=", target: self)
@@ -525,6 +566,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(selectNextOccurrence) {
+            guard NSApp.keyWindow == nil || NSApp.keyWindow === window, let id = currentID else { return false }
+            return window.firstResponder === editors[id]?.textView
+        }
+        if menuItem.action == #selector(undoEditing) || menuItem.action == #selector(redoEditing) {
+            let manager = (NSApp.keyWindow === window ? findController.panelUndoManager : nil)
+                ?? (NSApp.keyWindow ?? window).firstResponder?.undoManager
+            return menuItem.action == #selector(undoEditing) ? manager?.canUndo == true : manager?.canRedo == true
+        }
+        if [#selector(showFind), #selector(showReplace), #selector(findNext), #selector(findPrevious)].contains(menuItem.action) {
+            return NSApp.keyWindow?.isVisible != true || NSApp.keyWindow === window
+        }
         if menuItem.action == #selector(selectNumber) { return store.session.openIDs.indices.contains(menuItem.tag) }
         if menuItem.action == #selector(reopenClosed) { return !store.archived.isEmpty }
         if menuItem.action == #selector(changeOpacity) { menuItem.state = Int((preferences.opacity * 100).rounded()) == menuItem.tag ? .on : .off }
