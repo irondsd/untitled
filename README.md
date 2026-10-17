@@ -53,30 +53,30 @@ The editor opens UTF-8 and UTF-16 text regardless of extension. Finder registrat
 
 ## Keyboard shortcuts
 
-| Shortcut | Action |
-|---|---|
-| ⌘, | Settings |
-| ⌘T / ⌘N | New tab/note |
-| ⌘1…⌘9 | Select tab by position |
-| ⌃Tab / ⇧⌃Tab | Next/previous tab |
-| ⌘W | Close current tab; hide the window if only a blank scratch note remains (or close Settings/the archive window) |
-| ⇧⌘T | Reopen most recently closed tab, at its old position (repeat to go further back) |
-| ⇧⌘R | Rename note |
-| ⇧⌘A | Search the archive, preview and restore notes |
-| ⇧⌘F | Search all notes, including open notes |
-| ⌘O | Open text files |
-| ⌘S / ⇧⌘S | Save to an external file / Save As |
-| ⌘F / ⌘G / ⇧⌘G | Find / next / previous |
-| ⌘D | Select word / add next occurrence to selection |
-| ⇧⌘D | Select all occurrences of selected text / word under caret |
-| ⌥⌘F | Focus replacement field |
-| Return / ⇧Return in Find | Find next / previous (wraps) |
-| Return in Replace | Replace selected match, then find next; All replaces every match |
-| Esc | Close find panel, or reduce multiple editor selections to one |
-| ⌘Z / ⇧⌘Z | Undo / redo |
-| ⌘+ / ⌘= / ⌘− / ⌘0 | Increase / increase / decrease / reset text size |
-| ⌃⌘F | Fullscreen |
-| ⌘Q | Save local notes and quit |
+| Shortcut                 | Action                                                                                                         |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| ⌘,                       | Settings                                                                                                       |
+| ⌘T / ⌘N                  | New tab/note                                                                                                   |
+| ⌘1…⌘9                    | Select tab by position                                                                                         |
+| ⌃Tab / ⇧⌃Tab             | Next/previous tab                                                                                              |
+| ⌘W                       | Close current tab; hide the window if only a blank scratch note remains (or close Settings/the archive window) |
+| ⇧⌘T                      | Reopen most recently closed tab, at its old position (repeat to go further back)                               |
+| ⇧⌘R                      | Rename note                                                                                                    |
+| ⇧⌘A                      | Search the archive, preview and restore notes                                                                  |
+| ⇧⌘F                      | Search all notes, including open notes                                                                         |
+| ⌘O                       | Open text files                                                                                                |
+| ⌘S / ⇧⌘S                 | Save to an external file / Save As                                                                             |
+| ⌘F / ⌘G / ⇧⌘G            | Find / next / previous                                                                                         |
+| ⌘D                       | Select word / add next occurrence to selection                                                                 |
+| ⇧⌘D                      | Select all occurrences of selected text / word under caret                                                     |
+| ⌥⌘F                      | Focus replacement field                                                                                        |
+| Return / ⇧Return in Find | Find next / previous (wraps)                                                                                   |
+| Return in Replace        | Replace selected match, then find next; All replaces every match                                               |
+| Esc                      | Close find panel, or reduce multiple editor selections to one                                                  |
+| ⌘Z / ⇧⌘Z                 | Undo / redo                                                                                                    |
+| ⌘+ / ⌘= / ⌘− / ⌘0        | Increase / increase / decrease / reset text size                                                               |
+| ⌃⌘F                      | Fullscreen                                                                                                     |
+| ⌘Q                       | Save local notes and quit                                                                                      |
 
 ## Find and replace
 

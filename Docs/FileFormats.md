@@ -42,3 +42,5 @@ As with other external files, automatic saving writes only a local working copy.
 ## Using the registrations
 
 Build the app with `./build.sh`. To update the installed copy, quit it and run `./build.sh --install`. In Finder, select a representative file, choose Get Info → Open with → untitled → Change All. Repeat for each file type you want to associate. Finder may cache both app registrations and document icons.
+
+To verify the built app's Finder registrations in an active desktop session, run `xcrun swift Tests/FileAssociations.swift build/untitled.app`. This registers the bundle and asks macOS which apps can open a disposable fixture for every listed extension; it does not open the app or change default apps.
