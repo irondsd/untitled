@@ -23,15 +23,20 @@ struct HTMLSyntax: SyntaxDefinition {
     static func highlight(_ source: SyntaxSource) -> [SyntaxSpan] { HTMLScanner(source).scan() }
 }
 
-private final class HTMLScanner {
+/// Shared by HTML and XML. XML mode adds CDATA, processing-instruction attributes, DOCTYPE internal
+/// subsets and `_` name starts, and never treats `<script>`/`<style>` bodies as code.
+final class HTMLScanner {
+    private enum TagEnd { case open, closed, abandoned }
     private let source: SyntaxSource
+    private let xml: Bool
     private let text: NSString
     private let units: [UInt16]
     private var position = 0
     private var spans: [SyntaxSpan] = []
 
-    init(_ source: SyntaxSource) {
+    init(_ source: SyntaxSource, xml: Bool = false) {
         self.source = source
+        self.xml = xml
         text = source.text as NSString
         units = Array(source.text.utf16)
     }
@@ -40,6 +45,7 @@ private final class HTMLScanner {
         UnicodeScalar(value).map { CharacterSet.whitespacesAndNewlines.contains($0) } ?? false
     }
     private func letter(_ value: UInt16) -> Bool { (65...90).contains(value) || (97...122).contains(value) }
+    private func nameStart(_ value: UInt16) -> Bool { letter(value) || xml && (value == 95 || value >= 128) }
     private func namePart(_ value: UInt16) -> Bool {
         letter(value) || (48...57).contains(value) || [UInt16(45), 95, 58, 46].contains(value) || value >= 128
     }
@@ -60,12 +66,33 @@ private final class HTMLScanner {
                 let end = find("-->", from: position + 4).map { $0 + 3 } ?? units.count
                 add(position, end, .comment); position = end; continue
             }
+            if xml && character == 60 && unit(1) == 33 && position + 9 <= units.count
+                && text.substring(with: NSRange(location: position, length: 9)) == "<![CDATA[" {
+                add(position, position + 9, .marker)
+                let close = find("]]>", from: position + 9)
+                add(position + 9, close ?? units.count, .string)
+                if let close { add(close, close + 3, .marker) }
+                position = close.map { $0 + 3 } ?? units.count; continue
+            }
+            if xml && character == 60 && unit(1) == 63 {
+                // `<?xml version="1.0"?>` pseudo-attributes read like tag attributes.
+                add(position, position + 2, .marker); position += 2
+                let target = position
+                while position < units.count && namePart(unit()) { position += 1 }
+                add(target, position, .keyword)
+                var ignored = ""
+                _ = attributes(&ignored, instruction: true); continue
+            }
             if character == 60 && (unit(1) == 33 || unit(1) == 63) {
                 // Doctype, CDATA and processing instructions.
-                let end = find(">", from: position).map { $0 + 1 } ?? units.count
+                var end = find(">", from: position).map { $0 + 1 } ?? units.count
+                // An XML internal subset `[ <!ENTITY …> ]` ends at `]>`.
+                if xml, let open = find("[", from: position), open < end {
+                    end = find("]", from: open).flatMap { find(">", from: $0) }.map { $0 + 1 } ?? units.count
+                }
                 add(position, end, .keyword); position = end; continue
             }
-            if character == 60 && (letter(unit(1)) || unit(1) == 47 && letter(unit(2))) {
+            if character == 60 && (nameStart(unit(1)) || unit(1) == 47 && nameStart(unit(2))) {
                 tag(); continue
             }
             if character == 38 {
@@ -90,16 +117,31 @@ private final class HTMLScanner {
         add(nameStart, position, .tag)
         let name = text.substring(with: NSRange(location: nameStart, length: position - nameStart)).lowercased()
         var scriptType = ""
+        guard attributes(&scriptType, instruction: false) == .open else { return }
+        guard !xml, !closing, name == "script" || name == "style" else { return }
+        // Raw text runs to the matching end tag; nothing inside is markup.
+        let end = find("</" + name, from: position, caseInsensitive: true) ?? units.count
+        let markupScript = ["template", "html", "text/x-", "markdown"].contains { scriptType.contains($0) }
+        if name == "script" && markupScript { position = end; return }
+        let body = SyntaxSource(text.substring(with: NSRange(location: position, length: end - position)), cancelled: source.cancelled)
+        let embedded = name == "style" ? CSSSyntax.highlight(body) : JavaScriptSyntax.highlight(body)
+        spans += embedded.map { SyntaxSpan(range: NSRange(location: $0.range.location + position, length: $0.range.length), kind: $0.kind) }
+        position = end
+    }
+
+    /// Colors attributes up to the end of a tag or `?>`. Returns `.abandoned` at a stray `<`.
+    private func attributes(_ scriptType: inout String, instruction: Bool) -> TagEnd {
+        let terminator: UInt16 = instruction ? 63 : 47
         while position < units.count && !source.cancelled() {
             let character = unit()
             if whitespace(character) { position += 1; continue }
-            if character == 62 { add(position, position + 1, .marker); position += 1; break }
-            if character == 47 && unit(1) == 62 { add(position, position + 2, .marker); position += 2; return }
+            if character == 62 { add(position, position + 1, .marker); position += 1; return .open }
+            if character == terminator && unit(1) == 62 { add(position, position + 2, .marker); position += 2; return .closed }
             // A stray `<` means the tag was never closed; let the outer scan resume there.
-            if character == 60 { return }
+            if character == 60 { return .abandoned }
             let attributeStart = position
             while position < units.count && !whitespace(unit()) && ![UInt16(61), 62, 60].contains(unit())
-                && !(unit() == 47 && unit(1) == 62) { position += 1 }
+                && !(unit() == terminator && unit(1) == 62) { position += 1 }
             if position == attributeStart { position += 1; continue }
             add(attributeStart, position, .attribute)
             let attribute = text.substring(with: NSRange(location: attributeStart, length: position - attributeStart)).lowercased()
@@ -120,14 +162,6 @@ private final class HTMLScanner {
                 scriptType = text.substring(with: NSRange(location: valueStart, length: position - valueStart)).lowercased()
             }
         }
-        guard !closing, name == "script" || name == "style" else { return }
-        // Raw text runs to the matching end tag; nothing inside is markup.
-        let end = find("</" + name, from: position, caseInsensitive: true) ?? units.count
-        let markupScript = ["template", "html", "text/x-", "markdown"].contains { scriptType.contains($0) }
-        if name == "script" && markupScript { position = end; return }
-        let body = SyntaxSource(text.substring(with: NSRange(location: position, length: end - position)), cancelled: source.cancelled)
-        let embedded = name == "style" ? CSSSyntax.highlight(body) : JavaScriptSyntax.highlight(body)
-        spans += embedded.map { SyntaxSpan(range: NSRange(location: $0.range.location + position, length: $0.range.length), kind: $0.kind) }
-        position = end
+        return .open
     }
 }

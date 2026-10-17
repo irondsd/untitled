@@ -366,7 +366,7 @@ do {
         && kinds(regexSyntax, regexCases, at: "foo\\/\\/bar") == [.string], "regex escapes and character classes do not start comments")
     for snippet in [
         "\"const answer = 42;\"", "'interface User { id: number }'", "We should import the file tomorrow.",
-        "This function is useful.", "Remember to return the package.", "#!/bin/bash\necho hello"
+        "This function is useful.", "Remember to return the package."
     ] {
         try check(SyntaxEngine.analyze(snippet).language == .plain, "prose and literal contents are not JavaScript evidence: \(snippet.prefix(30))")
     }
@@ -406,7 +406,7 @@ do {
     try check(forcedPlain.language == .plain && forcedPlain.spans.isEmpty, "choosing plain text removes highlighting")
     try check(SyntaxEngine.detectLanguage("name: api\nport: 80") == .yaml && SyntaxEngine.detectLanguage("hello there") == .plain,
         "detection alone reports the language")
-    try check(NoteLanguage.allCases.map(\.fileExtension) == ["txt", "css", "html", "js", "md", "yaml"], "each format suggests a file extension")
+    try check(NoteLanguage.allCases.map(\.fileExtension) == ["txt", "sh", "css", "html", "js", "md", "xml", "yaml"], "each format suggests a file extension")
     func noOverlap(_ result: SyntaxResult, _ source: String) -> Bool {
         result.spans.allSatisfy { $0.range.location >= 0 && $0.range.length > 0 && NSMaxRange($0.range) <= (source as NSString).length }
             && zip(result.spans, result.spans.dropFirst()).allSatisfy { NSMaxRange($0.range) <= $1.range.location }
@@ -550,6 +550,114 @@ do {
     }
     for snippet in ["<div class=\"x", "<script>const a = '", "<!-- open", "<p>&amp", "<a href=x", "<style>a { color:"] {
         try check(noOverlap(SyntaxEngine.analyze(snippet, language: .html), snippet), "incomplete HTML keeps valid ranges: \(snippet)")
+    }
+    // Bash
+    let bash = #"""
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Deploy 🚀
+    NAME="${1:-world}"
+    files=(a.txt "b c.txt")
+    greet() {
+      local who=$1
+      echo "Hello, $who! Today is $(date +%A)" >&2
+    }
+    for f in "${files[@]}"; do
+      if [[ -f $f ]]; then grep -v '#' "$f" > /dev/null 2>&1; fi
+    done
+    case "$NAME" in
+      world|all) echo 'single $quoted';;
+      *) printf "%s\n" `whoami` ;;
+    esac
+    cat <<-EOF > out.txt
+    	value: $NAME and $((count + 1)) # not a comment
+    	EOF
+    cat <<'RAW'
+    $literal
+    RAW
+    echo done # trailing
+    """#
+    let bashSyntax = SyntaxEngine.analyze(bash)
+    try check(bashSyntax.language == .bash, "detects Bash from a shebang")
+    for (needle, kind) in [("#!/usr", SyntaxKind.comment), ("set", .function), ("-euo", .attribute), ("Deploy", .comment), ("NAME=", .key),
+                           ("${1:-world}", .key), ("files=", .key), ("\"b c.txt\"", .string), ("greet", .function), ("local", .function),
+                           ("who=", .key), ("$who", .key), ("Hello", .string), ("$(", .marker), ("date", .function), (">&2", .marker),
+                           ("for", .keyword), ("in \"", .keyword), ("${files[@]}", .key), ("do\n", .keyword), ("[[", .keyword), ("-f", .attribute),
+                           ("then", .keyword), ("grep", .function), ("'#'", .string), ("2>", .number), ("fi\n", .keyword), ("done\n", .keyword),
+                           ("case", .keyword), ("|all", .marker), (";;", .marker), ("esac", .keyword), ("`whoami`", .marker), ("whoami", .function),
+                           ("<<-", .marker), ("value:", .string), ("$((", .marker), ("count", .key), ("1))", .number), ("# not", .string),
+                           ("$literal", .string), ("trailing", .comment)] {
+        try check(kinds(bashSyntax, bash, at: needle).contains(kind), "Bash token: \(needle.debugDescription)")
+    }
+    try check(kinds(bashSyntax, bash, at: "single $quoted") == [.string], "single quotes do not expand variables")
+    try check(kinds(bashSyntax, bash, at: "done #") == [], "reserved words in argument position stay plain")
+    try check(kinds(bashSyntax, bash, at: "world|") == [], "case patterns are not commands")
+    try check(noOverlap(bashSyntax, bash), "Bash tokens stay ordered and in range")
+    for snippet in ["#!/bin/bash\necho hello", "#!/bin/sh\nexit 0", "for i in 1 2 3; do echo $i; done",
+                    "if [ -f ~/.bashrc ]; then\n  source ~/.bashrc\nfi", "git status\ngit pull\nnpm install",
+                    "while read -r line; do\n  echo \"$line\"\ndone < input.txt", "function deploy {\n  echo hi\n}",
+                    "FOO=bar\nBAZ=qux\nDEBUG=1", "cd ~/dev/app && npm test 2>&1 | tee log.txt"] {
+        try check(SyntaxEngine.analyze(snippet).language == .bash, "detects Bash: \(snippet.prefix(24).debugDescription)")
+    }
+    for (snippet, language) in [
+        ("make dinner\ncat food\nset alarm", NoteLanguage.plain),
+        ("It costs $5 or $10 today", .plain),
+        ("if it rains then\nwe stay home\ndone", .plain),
+        ("name: api\ncommand: echo \"$HOME\" 2>&1\nrun: npm test", .yaml),
+        ("run: |\n  if [ -f x ]; then echo; fi\n  echo $HOME", .yaml),
+        ("function deploy() {\n  console.log('hi');\n}", .javascript),
+        ("$(document).ready(function() {\n  $('.btn').on('click', go);\n});", .javascript),
+        ("const x = a << SHIFT;\nif (x) { y(); }", .javascript),
+        ("# Setup\n\n```bash\nnpm install\n```", .markdown),
+        ("Use `npm install` and then `npm test` here.", .markdown)
+    ] {
+        try check(SyntaxEngine.analyze(snippet).language == language, "Bash detection respects other formats: \(snippet.prefix(24).debugDescription)")
+    }
+    for snippet in ["echo \"unfinished $(date", "cat <<EOF\nno end", "x=${HOME", "echo 'open", "case $x in\n  a)", "$((1 +", "`ls", "arr=(a b",
+                    "cat <<", "echo hi \\\r\n  there\r\n", "printf '%s' 🧩 \"名前 $名\"", "a=1 b=2 cmd >"] {
+        try check(noOverlap(SyntaxEngine.analyze(snippet, language: .bash), snippet), "incomplete Bash keeps valid ranges: \(snippet.prefix(24).debugDescription)")
+    }
+
+    // XML
+    let xml = #"""
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE note [ <!ENTITY w "World"> ]>
+    <note xmlns:h="http://example.test/h" id='1'>
+      <h:to>Tove &w; — café</h:to>
+      <![CDATA[ a < b && c > d ]]>
+      <script>const x = 1;</script>
+      <empty/>
+      <!-- note -->
+    </note>
+    """#
+    let xmlSyntax = SyntaxEngine.analyze(xml)
+    try check(xmlSyntax.language == .xml, "detects XML from its declaration")
+    for (needle, kind) in [("<?", SyntaxKind.marker), ("xml version", .keyword), ("version", .attribute), ("\"UTF-8\"", .string), ("?>", .marker),
+                           ("<!DOCTYPE", .keyword), ("<!ENTITY", .keyword), ("note xmlns", .tag), ("xmlns:h", .attribute), ("'1'", .string),
+                           ("h:to", .tag), ("&w;", .literal), ("<![CDATA[", .marker), (" a < b", .string), ("]]>", .marker),
+                           ("empty", .tag), ("/>", .marker), ("note -->", .comment)] {
+        try check(kinds(xmlSyntax, xml, at: needle).contains(kind), "XML token: \(needle)")
+    }
+    try check(kinds(xmlSyntax, xml, at: "const x") == [], "XML script elements are not JavaScript")
+    try check(noOverlap(xmlSyntax, xml), "XML tokens stay ordered and in range")
+    for snippet in ["<note><to>Tove</to></note>", "<Config>\n  <Item name=\"a\"/>\n</Config>", "<svg xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M0 0\"/></svg>",
+                    "<!-- feed -->\n<rss version=\"2.0\"><channel><title>x</title></channel></rss>", "\u{FEFF}<?xml version=\"1.0\"?><a/>",
+                    "<LinearLayout android:id=\"@+id/root\" />", "<_x>a</_x>"] {
+        try check(SyntaxEngine.analyze(snippet).language == .xml, "detects XML: \(snippet.prefix(24).debugDescription)")
+    }
+    for (snippet, language) in [
+        ("<div><svg xmlns=\"http://www.w3.org/2000/svg\"></svg></div>", NoteLanguage.html),
+        ("<ul>\n<li>One</li>\n</ul>", .html),
+        ("<!DOCTYPE html>\n<html><body></body></html>", .html),
+        ("<Button onClick={() => save()} />", .javascript),
+        ("<><Item /></>", .javascript),
+        ("<p align=\"center\"><img src=\"logo.png\"></p>\n\n# Project", .markdown),
+        ("a < b && c > d", .plain)
+    ] {
+        try check(SyntaxEngine.analyze(snippet).language == language, "XML detection respects other formats: \(snippet.prefix(24).debugDescription)")
+    }
+    for snippet in ["<?xml version=\"1.0", "<![CDATA[ open", "<!DOCTYPE x [ <!ENTITY", "<a b=\"c", "<ns:tag", "<a>&amp"] {
+        try check(noOverlap(SyntaxEngine.analyze(snippet, language: .xml), snippet), "incomplete XML keeps valid ranges: \(snippet.debugDescription)")
     }
     try check(SyntaxEngine.analyze("custom: source", using: [TestFormat.self], cancelled: { true }).spans.isEmpty,
         "cancellation applies to added formats through the shared engine")

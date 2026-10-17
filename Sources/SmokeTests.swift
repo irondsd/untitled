@@ -734,7 +734,7 @@ extension AppDelegate {
                 try restore(scriptID)
                 try await waitForSyntax(editors[scriptID]!)
                 try check(editors[scriptID]!.syntax.language == .yaml, "chosen format survives archiving and restoring")
-                try check(["Plain Text", "CSS", "HTML", "JavaScript / TypeScript", "Markdown", "YAML"].allSatisfy { title in
+                try check(["Plain Text", "Bash", "CSS", "HTML", "JavaScript / TypeScript", "Markdown", "XML", "YAML"].allSatisfy { title in
                     syntaxMenu.items.contains { $0.title == title } }, "Syntax menu lists every format")
                 chooseSyntax("HTML")
                 try await waitForSyntax(editors[scriptID]!)

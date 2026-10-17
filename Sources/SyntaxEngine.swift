@@ -1,11 +1,13 @@
 import Foundation
 
 /// Case order is the Syntax menu order; raw values are stored in note metadata.
-enum NoteLanguage: String, CaseIterable { case plain, css, html, javascript, markdown, yaml }
+enum NoteLanguage: String, CaseIterable { case plain, bash, css, html, javascript, markdown, xml, yaml }
 extension NoteLanguage {
     var displayName: String {
         switch self {
         case .plain: return "Plain Text"
+        case .bash: return "Bash"
+        case .xml: return "XML"
         case .yaml: return "YAML"
         case .markdown: return "Markdown"
         case .javascript: return "JavaScript / TypeScript"
@@ -17,6 +19,8 @@ extension NoteLanguage {
     var fileExtension: String {
         switch self {
         case .plain: return "txt"
+        case .bash: return "sh"
+        case .xml: return "xml"
         case .yaml: return "yaml"
         case .markdown: return "md"
         case .javascript: return "js"
@@ -46,7 +50,7 @@ protocol SyntaxDefinition {
 
 /// A tolerant source highlighter, not a validator or renderer. Add formats to this registry.
 enum SyntaxEngine {
-    static let definitions: [SyntaxDefinition.Type] = [MarkdownSyntax.self, YAMLSyntax.self, JavaScriptSyntax.self, HTMLSyntax.self, CSSSyntax.self]
+    static let definitions: [SyntaxDefinition.Type] = [MarkdownSyntax.self, YAMLSyntax.self, JavaScriptSyntax.self, HTMLSyntax.self, XMLSyntax.self, CSSSyntax.self, BashSyntax.self]
 
     /// Pass `language` to skip detection and tokenize with a manually chosen format.
     static func analyze(_ text: String, using definitions: [SyntaxDefinition.Type] = SyntaxEngine.definitions,
