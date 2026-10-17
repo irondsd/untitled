@@ -4,7 +4,7 @@ Syntax highlighting has three layers:
 
 - `SyntaxEngine` chooses a format from its registry, using a bounded sample of the note, then tokenizes the whole note. It discards cancelled results.
 - Each `SyntaxDefinition` supplies content detection and UTF-16 token spans. YAML, Markdown, HTML, CSS and the combined JavaScript/TypeScript/JSX mode live in separate `Syntax*.swift` files. These modules depend only on Foundation.
-- `EditorSyntaxHighlighter` schedules background work and maps semantic token kinds to temporary foreground colors. It owns AppKit integration, brightness, and stale-result protection. It never changes text storage or undo history.
+- `EditorSyntaxHighlighter` schedules background work and maps semantic token kinds to temporary foreground colors. It owns AppKit integration, brightness, and stale-result protection. It never changes text storage or undo history. It colors only the visible text plus one screen above and below, repainting as the view scrolls, resizes or switches tabs, and shares one color object per token kind. `SyntaxSpanIndex` (built on the background queue) finds the spans for that window by binary search and preserves the override order of overlapping spans.
 
 To add a format:
 

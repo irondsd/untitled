@@ -541,6 +541,43 @@ do {
     }
     try check(SyntaxEngine.analyze("custom: source", using: [TestFormat.self], cancelled: { true }).spans.isEmpty,
         "cancellation applies to added formats through the shared engine")
+    // Visible-range painting asks the index for on-screen spans only.
+    func span(_ location: Int, _ length: Int, _ kind: SyntaxKind = .key) -> SyntaxSpan {
+        SyntaxSpan(range: NSRange(location: location, length: length), kind: kind)
+    }
+    func ranges(_ spans: [SyntaxSpan]) -> [NSRange] { spans.map(\.range) }
+    let disjoint = SyntaxSpanIndex([span(0, 3), span(5, 2), span(10, 4), span(20, 1)])
+    try check(disjoint.count == 4 && ranges(disjoint.spans(in: NSRange(location: 6, length: 6)))
+        == [NSRange(location: 6, length: 1), NSRange(location: 10, length: 2)], "span index clips disjoint spans to the window")
+    try check(disjoint.spans(in: NSRange(location: 3, length: 2)).isEmpty
+        && disjoint.spans(in: NSRange(location: 14, length: 6)).isEmpty, "span index skips gaps and touching boundaries")
+    try check(disjoint.spans(in: NSRange(location: 21, length: 50)).isEmpty && disjoint.spans(in: NSRange(location: 0, length: 0)).isEmpty,
+        "span index handles windows past the end and empty windows")
+    try check(SyntaxSpanIndex().spans(in: NSRange(location: 0, length: 10)).isEmpty, "empty span index returns nothing")
+    let unsorted = SyntaxSpanIndex([span(10, 2, .string), span(0, 2, .number), span(5, 2, .comment)])
+    try check(unsorted.spans(in: NSRange(location: 0, length: 12)).map(\.kind) == [.number, .comment, .string],
+        "span index sorts out-of-order disjoint spans")
+    // A long early span must not hide later short ones, and later overlaps still override.
+    let layered = SyntaxSpanIndex([span(0, 100, .code), span(40, 5, .key), span(42, 2, .string), span(90, 3, .number)])
+    let middle = layered.spans(in: NSRange(location: 41, length: 2))
+    try check(middle.map(\.kind) == [.code, .key, .string] && ranges(middle)
+        == [NSRange(location: 41, length: 2), NSRange(location: 41, length: 2), NSRange(location: 42, length: 1)],
+        "overlapping spans keep their original override order")
+    try check(layered.spans(in: NSRange(location: 60, length: 10)).map(\.kind) == [.code], "an enclosing span reaches windows inside it")
+    let reversed = SyntaxSpanIndex([span(30, 5, .key), span(0, 50, .comment)])
+    try check(reversed.spans(in: NSRange(location: 31, length: 1)).map(\.kind) == [.key, .comment],
+        "a later enclosing span still overrides an earlier one after sorting")
+    let indexedNote = "---\ntitle: Plan\n---\n# Heading\n\nSome **bold** text.\n"
+    let analyzed = SyntaxEngine.analyze(indexedNote)
+    let everything = NSRange(location: 0, length: (indexedNote as NSString).length)
+    try check(SyntaxSpanIndex(analyzed.spans).spans(in: everything).map { "\($0.range)\($0.kind)" }
+        == analyzed.spans.map { "\($0.range)\($0.kind)" }, "the whole-note window reproduces the engine's spans in order")
+    var many: [SyntaxSpan] = []
+    for line in 0..<20_000 { many.append(span(line * 10, 4, line % 2 == 0 ? .key : .string)); many.append(span(line * 10 + 5, 3, .number)) }
+    let large = SyntaxSpanIndex(many)
+    try check(ranges(large.spans(in: NSRange(location: 150_002, length: 10)))
+        == [NSRange(location: 150_002, length: 2), NSRange(location: 150_005, length: 3), NSRange(location: 150_010, length: 2)],
+        "span index finds a window deep in a large note")
     print("\n\(count) storage, line-index, find and syntax checks passed")
 } catch {
     fputs("FAIL: \(error.localizedDescription)\n", stderr)

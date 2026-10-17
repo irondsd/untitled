@@ -751,6 +751,49 @@ extension AppDelegate {
                 syntaxMenu.update()
                 try check(editors[scriptID]!.syntax.language == .javascript && store.records[scriptID]?.syntax == nil
                     && syntaxMenu.items.first!.title.contains("JavaScript"), "Detect Automatically returns to the detected format")
+                // Long notes color only the visible text and a margin, and repaint as they scroll.
+                newTab(nil)
+                let longID = currentID!, longPane = editors[currentID!]!, longView = editors[currentID!]!.textView
+                let longNote = (0..<4000).map { "key\($0): value \($0)\n" }.joined()
+                longView.insertText(longNote, replacementRange: NSRange(location: 0, length: 0))
+                try await waitForSyntax(longPane)
+                @MainActor func longColor(_ line: Int) -> NSColor? {
+                    let offset = (longView.string as NSString).range(of: "key\(line):").location
+                    return longView.layoutManager?.temporaryAttribute(.foregroundColor, atCharacterIndex: offset, effectiveRange: nil) as? NSColor
+                }
+                @MainActor func scrollLong(to line: Int) async throws {
+                    longView.scrollRangeToVisible((longView.string as NSString).range(of: "key\(line):"))
+                    try await Task.sleep(nanoseconds: 50_000_000)
+                }
+                try check(longPane.syntax.language == .yaml, "long YAML notes are detected")
+                try await scrollLong(to: 0)
+                try check(longColor(0) != nil && longColor(3999) == nil, "only text near the visible range carries syntax colors")
+                try check(longColor(0) === longColor(1), "spans of one token kind share a single color object")
+                try await scrollLong(to: 3999)
+                try check(longColor(3999) != nil && longColor(0) == nil, "scrolling paints newly visible text and releases the rest")
+                try await scrollLong(to: 2000)
+                try check(longColor(2000) != nil && longColor(3999) == nil, "jumping to the middle paints it")
+                longView.setSelectedRange((longView.string as NSString).range(of: "key2000:"))
+                longView.undoManager?.removeAllActions()
+                longView.breakUndoCoalescing()
+                longView.insertText("renamed2000:", replacementRange: longView.selectedRange())
+                try check(longPane.syntax.isHighlighting && longColor(2001) != nil, "visible colors stay while an edit is analyzed")
+                try await waitForSyntax(longPane)
+                let renamedOffset = (longView.string as NSString).range(of: "renamed2000:").location
+                try check(longView.layoutManager?.temporaryAttribute(.foregroundColor, atCharacterIndex: renamedOffset, effectiveRange: nil) != nil
+                    && longColor(2001) != nil, "edits in a long note are recolored where they happen")
+                let beforeBrightness = longColor(2001)
+                longPane.applyAppearance(brightness: 0.85, showsLineNumbers: true)
+                try check(longColor(2001) != nil && longColor(2001) != beforeBrightness, "brightness repaints the visible range")
+                try switchTab(syntaxID)
+                try switchTab(longID)
+                try check(editors[longID] === longPane && longColor(2001) != nil, "switching back to a long note keeps its visible colors")
+                longView.undoManager?.undo()
+                try await waitForSyntax(longPane)
+                try check(longView.string == longNote, "visible-range painting leaves native undo intact")
+                try flush()
+                try check(try store.text(longID) == longNote && !longPane.dirty, "painting never dirties or alters the saved note")
+                try close(longID)
                 let savedFileURL = store.root.appendingPathComponent("opened-readme.md")
                 try "# Opened".write(to: savedFileURL, atomically: true, encoding: .utf8)
                 try openFile(savedFileURL)

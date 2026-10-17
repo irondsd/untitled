@@ -232,6 +232,7 @@ final class EditorPane {
         let length = min(record.selectionLength, (text as NSString).length - location)
         textView.setSelectedRange(NSRange(location: max(0, location), length: max(0, length)))
         scroll.documentView = textView
+        syntax.track(scroll.contentView)
         scroll.verticalRulerView = lineNumbers
         scroll.hasVerticalRuler = true
         scroll.rulersVisible = true
@@ -249,6 +250,8 @@ final class EditorPane {
         textView.setFrameOrigin(.zero)
         scroll.contentView.scroll(to: NSPoint(x: -insets.left, y: scroll.contentView.bounds.minY))
         scroll.reflectScrolledClipView(scroll.contentView)
+        // Showing a tab, resizing or rewrapping can expose text that was never painted.
+        syntax.paint()
     }
     func applyFont(size: CGFloat) {
         textView.font = Theme.font(size)
