@@ -19,8 +19,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     private var archiveController: ArchiveController?
     private var searchController: ArchiveController?
     private var lastSaveError: String?
-    private var fontSize: CGFloat = 14
-    private var opacity: CGFloat = 0.48
+    private(set) var fontSize: CGFloat = 14
+    var preferences = EditorPreferences()
+    var preferencesDefaults = UserDefaults.standard
+    var settingsController: SettingsController?
     private var startupURLs: [URL] = []
     private let headerHeight: CGFloat = 38
     private var isSmokeTesting: Bool { CommandLine.arguments.contains("--smoke-test") }
@@ -33,9 +35,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
                 ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                     .appendingPathComponent("untitled", isDirectory: true)
             store = try NotesStore(root: dataRoot)
-            let savedSize = UserDefaults.standard.double(forKey: "fontSize")
-            if savedSize >= 10 && savedSize <= 36 { fontSize = savedSize }
-            if UserDefaults.standard.object(forKey: "opacity") != nil { opacity = CGFloat(UserDefaults.standard.double(forKey: "opacity")) }
+            // Disposable note roots also get separate preferences, never the user's settings.
+            if override != nil {
+                let suite = "local.untitled.tests." + dataRoot.path.replacingOccurrences(of: "/", with: ".")
+                preferencesDefaults = UserDefaults(suiteName: suite)!
+            }
+            preferences = EditorPreferences(defaults: preferencesDefaults)
+            fontSize = CGFloat(preferences.defaultFontSize)
+            let savedSize = preferencesDefaults.double(forKey: "fontSize")
+            if savedSize >= 10 && savedSize <= 36 { fontSize = CGFloat(EditorPreferences.fontSize(savedSize)) }
             buildMenus()
             buildWindow()
             try displaySelected()
@@ -76,7 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         effect.frame = root.bounds
         root.addSubview(effect)
         tint.wantsLayer = true
-        tint.layer?.backgroundColor = NSColor.black.withAlphaComponent(opacity).cgColor
+        tint.layer?.backgroundColor = preferences.backgroundColor.cgColor
         root.addSubview(tint)
         header.wantsLayer = true
         header.layer?.backgroundColor = NSColor.clear.cgColor
@@ -174,6 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         if let currentID { editors[currentID]?.scroll.removeFromSuperview() }
         if editors[id] == nil {
             let pane = EditorPane(text: try store.text(id), fontSize: fontSize, record: record)
+            pane.applyAppearance(brightness: preferences.brightness, showsLineNumbers: preferences.showsLineNumbers)
             pane.textView.delegate = self
             editors[id] = pane
         }
@@ -380,16 +389,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
 
     @objc private func increaseFont(_ sender: Any?) { changeFont(by: 1) }
     @objc private func decreaseFont(_ sender: Any?) { changeFont(by: -1) }
-    @objc private func resetFont(_ sender: Any?) { fontSize = 14; changeFont(by: 0) }
+    @objc private func resetFont(_ sender: Any?) { fontSize = CGFloat(preferences.defaultFontSize); changeFont(by: 0) }
     private func changeFont(by delta: CGFloat) {
-        fontSize = min(36, max(10, fontSize + delta))
-        UserDefaults.standard.set(Double(fontSize), forKey: "fontSize")
+        fontSize = CGFloat(EditorPreferences.fontSize(Double(fontSize + delta)))
+        preferencesDefaults.set(Double(fontSize), forKey: "fontSize")
         editors.values.forEach { $0.applyFont(size: fontSize) }
     }
     @objc private func changeOpacity(_ sender: NSMenuItem) {
-        opacity = CGFloat(sender.tag) / 100
-        UserDefaults.standard.set(Double(opacity), forKey: "opacity")
-        tint.layer?.backgroundColor = NSColor.black.withAlphaComponent(opacity).cgColor
+        var updated = preferences
+        updated.opacity = Double(sender.tag) / 100
+        applyPreferences(updated)
+    }
+    func applyPreferences(_ updated: EditorPreferences) {
+        let defaultChanged = preferences.defaultFontSize != updated.defaultFontSize
+        preferences = updated
+        preferences.save(to: preferencesDefaults)
+        tint.layer?.backgroundColor = preferences.backgroundColor.cgColor
+        if defaultChanged {
+            fontSize = CGFloat(preferences.defaultFontSize)
+            changeFont(by: 0)
+        }
+        for pane in editors.values {
+            pane.applyAppearance(brightness: preferences.brightness, showsLineNumbers: preferences.showsLineNumbers)
+        }
+        settingsController?.refresh(preferences)
+    }
+    @objc private func showSettings(_ sender: Any?) {
+        if settingsController == nil {
+            settingsController = SettingsController(preferences: preferences)
+            settingsController?.onChange = { [weak self] in self?.applyPreferences($0) }
+        }
+        settingsController?.refresh(preferences)
+        settingsController?.showWindow(nil)
+        settingsController?.window?.makeKeyAndOrderFront(nil)
     }
     @objc private func revealStorage(_ sender: Any?) { NSWorkspace.shared.open(store.root) }
     @objc private func showMainWindow(_ sender: Any?) {
@@ -398,7 +430,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     }
     @objc private func showAbout(_ sender: Any?) {
         NSApp.orderFrontStandardAboutPanel(options: [
-            .applicationName: "untitled", .applicationVersion: "0.1.1",
+            .applicationName: "untitled", .applicationVersion: "0.1.3",
             .credits: NSAttributedString(string: "A quiet place for things you want to keep.\nNative macOS. Notes stay on this Mac.")
         ])
     }
@@ -419,6 +451,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         }
         let app = submenu("untitled")
         item(app, "About untitled", #selector(showAbout), target: self)
+        app.addItem(.separator())
+        item(app, "Settings…", #selector(showSettings), ",", target: self)
         app.addItem(.separator())
         let services = NSMenu(title: "Services")
         let servicesItem = app.addItem(withTitle: "Services", action: nil, keyEquivalent: "")
@@ -493,7 +527,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(selectNumber) { return store.session.openIDs.indices.contains(menuItem.tag) }
         if menuItem.action == #selector(reopenClosed) { return !store.archived.isEmpty }
-        if menuItem.action == #selector(changeOpacity) { menuItem.state = Int(opacity * 100) == menuItem.tag ? .on : .off }
+        if menuItem.action == #selector(changeOpacity) { menuItem.state = Int((preferences.opacity * 100).rounded()) == menuItem.tag ? .on : .off }
         return true
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool {

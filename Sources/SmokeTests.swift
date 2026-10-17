@@ -151,6 +151,79 @@ extension AppDelegate {
                 baselineManager.ensureLayout(for: baselineContainer)
                 try check(abs(baselinePane.lineNumbers.baseline(for: 3)! - finalLineBaseline) < 0.01,
                     "typing on the final empty line preserves its number baseline")
+                // Live preferences must preserve native editing state and note contents.
+                let settingsPane = editors[currentID!]!
+                settingsPane.textView.insertText("Settings fixture\nsecond line", replacementRange: settingsPane.textView.selectedRange())
+                try flush()
+                let settingsText = settingsPane.textView.string
+                let settingsSelection = settingsPane.textView.selectedRange()
+                let oldPreferences = preferences
+                var updated = preferences
+                updated.opacity = 0.72
+                updated.backgroundBlackLevel = 0.6
+                updated.brightness = 0.68
+                updated.defaultFontSize = 18.3
+                updated.showsLineNumbers = false
+                applyPreferences(updated)
+                try check(EditorPreferences(defaults: preferencesDefaults) == updated, "all appearance settings persist")
+                let background = preferences.backgroundColor.usingColorSpace(.genericGray)!
+                try check(abs(background.whiteComponent - 0.4) < 0.001 && abs(background.alphaComponent - 0.72) < 0.001,
+                    "background black level and opacity vary independently")
+                try check(EditorPreferences.fontSize(9.9) == 10 && EditorPreferences.fontSize(36.1) == 36
+                    && EditorPreferences.fontSize(14.26) == 14.3, "font size clamps to limits and rounds to one decimal")
+                try check(fontSize == 18.3 && editors.values.allSatisfy { $0.textView.font?.pointSize == 18.3 },
+                    "default font size applies to all open editors")
+                try check(!settingsPane.scroll.rulersVisible && settingsPane.scroll.contentView.contentInsets.left == 0,
+                    "hiding line numbers removes the gutter")
+                try check(settingsPane.scroll.convert(.zero, from: settingsPane.textView).x == 0,
+                    "text fills the hidden gutter without a horizontal offset")
+                try check(settingsPane.textView.string == settingsText && settingsPane.textView.selectedRange() == settingsSelection,
+                    "live appearance changes preserve text and selection")
+                try check(!settingsPane.dirty && settingsPane.textView.undoManager?.canUndo == true,
+                    "settings leave autosave and undo state intact")
+                settingsPane.textView.undoManager?.undo()
+                try check(!settingsPane.textView.string.contains("Settings fixture"), "appearance changes do not replace the text undo action")
+                settingsPane.textView.undoManager?.redo()
+                try check(settingsPane.textView.string == settingsText, "text redo survives appearance changes")
+                let foreground = settingsPane.textView.textColor!.usingColorSpace(.genericGray)!.whiteComponent
+                try check(abs(foreground - 0.68) < 0.001, "brightness applies to existing text")
+                @MainActor func command(_ key: String, code: UInt16) -> Bool {
+                    let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+                        timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                        characters: key, charactersIgnoringModifiers: key, isARepeat: false, keyCode: code)!
+                    return NSApp.mainMenu!.performKeyEquivalent(with: event)
+                }
+                try check(command("=", code: 24) && fontSize == 19.3, "Command-plus temporarily zooms above the chosen default")
+                try check(preferences.defaultFontSize == 18.3, "zoom does not change the default font size")
+                try check(command("0", code: 29) && fontSize == 18.3, "Command-zero resets to the chosen default")
+                let typingColor = settingsPane.textView.typingAttributes[.foregroundColor] as! NSColor
+                try check(abs(typingColor.usingColorSpace(.genericGray)!.whiteComponent - 0.68) < 0.001,
+                    "zoom preserves brightness for newly typed text")
+                updated.showsLineNumbers = true
+                applyPreferences(updated)
+                try check(settingsPane.scroll.rulersVisible && settingsPane.scroll.contentView.contentInsets.left > 0,
+                    "showing line numbers restores the gutter")
+                try check(settingsPane.scroll.convert(.zero, from: settingsPane.textView).x >= settingsPane.lineNumbers.frame.maxX,
+                    "restored gutter stays beside editable text")
+                try check(settingsPane.lineNumbers.lines.starts.count == settingsText.components(separatedBy: "\n").count,
+                    "line numbering remains correct after toggling")
+                newTab(nil)
+                let inheritedPane = editors[currentID!]!
+                try check(inheritedPane.textView.font?.pointSize == 18.3 && inheritedPane.scroll.rulersVisible,
+                    "new tabs inherit font size and line number visibility")
+                try check(abs(inheritedPane.textView.textColor!.usingColorSpace(.genericGray)!.whiteComponent - 0.68) < 0.001,
+                    "new tabs inherit brightness")
+                try check(command(",", code: 43) && settingsController?.window?.isVisible == true,
+                    "Command-comma opens Settings")
+                let firstController = settingsController
+                try check(command(",", code: 43) && settingsController === firstController,
+                    "Settings reuses a single window")
+                // Key-window routing is checked in the active preview; this test app is inactive.
+                let openIDsBeforeClose = store.session.openIDs
+                settingsController?.window?.performClose(nil)
+                try check(settingsController?.window?.isVisible == false, "Settings closes normally")
+                try check(store.session.openIDs == openIDsBeforeClose, "closing Settings leaves notes open")
+                applyPreferences(oldPreferences)
                 try flush()
                 let report: [String: Any] = ["passed": true, "checks": checks]
                 let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])

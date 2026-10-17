@@ -12,6 +12,9 @@ final class LineNumberRuler: NSRulerView {
         lines = LogicalLines(textView.string)
         super.init(scrollView: scrollView, orientation: .verticalRuler)
         clientView = textView
+        // AppKit can invalidate beyond a view’s bounds in a full-size-content window.
+        // Keep the gutter fill and divider out of the title row.
+        clipsToBounds = true
         scrollView.contentView.postsBoundsChangedNotifications = true
         textView.postsFrameChangedNotifications = true
         let center = NotificationCenter.default

@@ -25,16 +25,18 @@ The result is `build/untitled.app`. Copy it to Applications if you want; it runs
 - Automatic saving follows edits after a 0.4-second pause, and runs before tab switches, closing, app deactivation, and quitting. A sudden crash can lose the last unsaved fraction of a second.
 - Open tabs, their order, selected tab, titles, cursor position, and scroll position survive relaunch. Undo history is retained while a tab stays open, but not across app restarts or archiving.
 - Line numbers count real logical lines; soft-wrapped rows share a line number. Word wrapping and native find are included. Syntax highlighting and detection are intentionally not included yet.
-- View → Background adjusts transparency. The window uses native background blur; its appearance respects macOS transparency settings.
+- Settings (⌘,) adjusts background opacity, background black level (50–100%), font brightness, default font size (10.0–36.0 pt in 0.1 pt steps), and line-number visibility. Changes apply immediately to open and new tabs and persist locally. Changing the default size also sets the current size; temporary zoom leaves the default unchanged, and ⌘0 returns to it.
+- View → Background also offers transparency presets, kept in sync with Settings. The window uses native background blur; its appearance respects macOS transparency settings.
 
 ## Keyboard shortcuts
 
 | Shortcut | Action |
 |---|---|
+| ⌘, | Settings |
 | ⌘T / ⌘N | New tab/note |
 | ⌘1…⌘9 | Select tab by position |
 | ⌃Tab / ⇧⌃Tab | Next/previous tab |
-| ⌘W | Close and archive current tab (or close the archive window) |
+| ⌘W | Close and archive current tab (or close Settings/the archive window) |
 | ⇧⌘T | Reopen most recently closed tab |
 | ⇧⌘R | Rename note |
 | ⇧⌘A | Search the archive, preview and restore notes |
@@ -81,3 +83,8 @@ The UI smoke test exercises real NSTextView typing/undo, Command-T, tab switchin
 The initial release passed 23 storage checks and 26 native integration checks. Mouse selection, right-click renaming, archive content search/restore, native Find and the single-note title bar were also checked in the running app. On the development Mac (Apple Silicon, macOS 15.4.1), the app bundle measured 0.67 MiB and a performance sample after editing/searching reported a 42.3 MiB physical footprint. These are small-note measurements, not limits or guarantees for large documents.
 
 Version 0.1.1 passed 45 storage/line-index checks and 42 native integration checks, including the single-character empty-line baseline regression. Its line-number index is updated incrementally; only visible labels are drawn. Window dragging, active/inactive tab colors and the archive delete confirmation were also checked in the running preview.
+
+Version 0.1.2 passed 45 storage/line-index checks and 64 native integration checks. Settings persistence, live font/brightness changes, default-size reset, gutter toggling, and retained text/selection/undo are covered. The Settings layout and Command-comma/Command-W behavior were also checked in the active preview. Test data directories use separate preference domains.
+
+Version 0.1.3 clips the line-number gutter below the title bar, separates background black level from opacity, and replaces the font-size dropdown with a decimal field and stepper.
+The update passed 66 native integration checks; the clipped gutter, decimal entry/stepper, maximum font size, and independent background slider were also verified in the running preview.

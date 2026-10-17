@@ -178,10 +178,12 @@ final class EditorPane {
     let lineNumbers: LineNumberRuler
     let undo = UndoManager()
     var dirty = false
+    private var brightness: Double = 0.93
 
     init(text: String, fontSize: CGFloat, record: NoteRecord) {
         scroll = NSScrollView(frame: .zero)
         scroll.drawsBackground = false
+        scroll.clipsToBounds = true
         scroll.automaticallyAdjustsContentInsets = false
         scroll.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         scroll.contentView.automaticallyAdjustsContentInsets = true
@@ -250,10 +252,27 @@ final class EditorPane {
         paragraph.defaultTabInterval = Theme.font(size).maximumAdvancement.width * 4
         paragraph.tabStops = []
         textView.defaultParagraphStyle = paragraph
-        textView.typingAttributes = [.font: Theme.font(size), .foregroundColor: Theme.text, .paragraphStyle: paragraph]
+        textView.typingAttributes = [.font: Theme.font(size), .foregroundColor: textView.textColor ?? Theme.text, .paragraphStyle: paragraph]
         if let storage = textView.textStorage, storage.length > 0 {
             storage.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: storage.length))
         }
         lineNumbers.refreshMetrics()
+        if scroll.documentView != nil { layoutEditor() }
+    }
+    func applyAppearance(brightness: Double, showsLineNumbers: Bool) {
+        if self.brightness != brightness {
+            self.brightness = brightness
+            let color = NSColor(calibratedWhite: CGFloat(brightness), alpha: 1)
+            textView.textColor = color
+            textView.insertionPointColor = color
+            var typing = textView.typingAttributes
+            typing[.foregroundColor] = color
+            textView.typingAttributes = typing
+        }
+        if scroll.rulersVisible != showsLineNumbers {
+            scroll.hasVerticalRuler = showsLineNumbers
+            scroll.rulersVisible = showsLineNumbers
+            layoutEditor()
+        }
     }
 }
