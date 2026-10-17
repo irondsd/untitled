@@ -22,6 +22,7 @@ cp Info.plist build/untitled.app/Contents/Info.plist
 if [ -f Resources/AppIcon.icns ]; then
   cp Resources/AppIcon.icns build/untitled.app/Contents/Resources/AppIcon.icns
 fi
+cp Resources/DocumentIcon.icns build/untitled.app/Contents/Resources/DocumentIcon.icns
 codesign --force --sign - build/untitled.app
 # Resource replacements do not update the outer bundle's timestamp on their own.
 # Let Finder notice the new icon after an incremental build.

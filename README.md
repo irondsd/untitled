@@ -20,7 +20,9 @@ The result is `build/untitled.app`. To also install it, run `./build.sh --instal
 ln -s "$PWD/unt" ~/bin/unt
 ```
 
-To regenerate the existing app icon, run `./make-icon.sh`, then `./build.sh`. The icon script renders the ten standard/Retina sizes from `MakeIcon.swift` and packages them with Apple's `iconutil`. Keep this packaging step: manually placing PNGs in the small ICNS representation slots can produce scrambled icons in Finder and Activity Monitor even when the Dock looks correct.
+To regenerate the app and document icons, run `./make-icon.sh`, then `./build.sh`. The icon script renders the ten standard/Retina sizes from `MakeIcon.swift` and `MakeDocumentIcon.swift` and packages them with Apple's `iconutil`. Keep this packaging step: manually placing PNGs in the small ICNS representation slots can produce scrambled icons in Finder and Activity Monitor even when the Dock looks correct.
+
+Supported text/source files share a folded-page document icon with the app's `u_` mark. To choose untitled as the default for a file type, select a file in Finder, open Get Info, choose untitled under Open with, and click Change All. Repeat for each desired file type. Installing the app does not change existing default-app preferences; Finder may take time to refresh cached icons.
 
 ## Behavior
 
@@ -28,7 +30,7 @@ To regenerate the existing app icon, run `./make-icon.sh`, then `./build.sh`. Th
 - Multiple tabs: a compact tab strip alongside the native window buttons.
 - The active tab shares the editor background; inactive tabs are slightly darker, including the window-button area when the first tab is inactive.
 - Scratch notes are named `untitled`. Right-click a tab to rename it, click the single-note title, or use ⇧⌘R. A custom title changes the note label, not a file's name on disk.
-- Closing a tab archives it unless it is an unnamed scratch note containing only whitespace, or a file opened from disk with no unsaved edits. Those local copies are discarded; the original file stays on disk. An opened file with unsaved edits is archived so the edits are not lost. Renamed empty notes and scratch notes saved to a file are retained. Closing the last tab creates a fresh blank note.
+- Closing a tab archives it unless it is an unnamed scratch note containing only whitespace, or a file opened from disk with no unsaved edits. Those local copies are discarded; the original file stays on disk. An opened file with unsaved edits is archived so the edits are not lost. Renamed empty notes and scratch notes saved to a file are retained. Closing the last tab creates a fresh blank note. If the only tab is already an unnamed blank scratch note (including whitespace only), ⌘W hides the window and keeps that tab ready; click the Dock icon to show it again.
 - ⇧⌘T reopens closed tabs like a browser: the most recently closed tab comes back at its old position, and repeating it walks further back. Unchanged files opened from disk reopen from their path even though their local copy was discarded. Blank scratch notes are skipped. When closing the last tab left only a blank note, the reopened tab replaces it. The closed-tab history lasts until the app quits; after that, ⇧⌘T restores the most recently archived note.
 - Archive rows have a small trash button that permanently deletes the local note immediately, without confirmation. Original files opened from disk are never deleted. Existing archived blank notes remain until explicitly deleted.
 - Drag the top row, a tab label, or the centered note title to move the window. Buttons and right-click tab menus remain usable.
@@ -54,7 +56,7 @@ To regenerate the existing app icon, run `./make-icon.sh`, then `./build.sh`. Th
 | ⌘T / ⌘N | New tab/note |
 | ⌘1…⌘9 | Select tab by position |
 | ⌃Tab / ⇧⌃Tab | Next/previous tab |
-| ⌘W | Close and archive current tab (or close Settings/the archive window) |
+| ⌘W | Close current tab; hide the window if only a blank scratch note remains (or close Settings/the archive window) |
 | ⇧⌘T | Reopen most recently closed tab, at its old position (repeat to go further back) |
 | ⇧⌘R | Rename note |
 | ⇧⌘A | Search the archive, preview and restore notes |

@@ -826,6 +826,45 @@ extension AppDelegate {
                 try check(NSApp.mainMenu!.performKeyEquivalent(with: reopenEvent), "Command-Shift-T handled by menu")
                 try check(store.session.openIDs.count == 1 && store.records[leftBlank] == nil && currentID != leftBlank,
                     "reopening replaces the blank note left by closing the last tab")
+                for id in store.session.openIDs { try close(id) }
+                let lastBlank = currentID!
+                let lastBlankPane = editors[lastBlank]!
+                let closeEvent = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+                    timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                    characters: "w", charactersIgnoringModifiers: "w", isARepeat: false, keyCode: 13)!
+                window.orderFront(nil)
+                try check(window.isVisible, "editor is visible before closing its only blank tab")
+                try check(NSApp.mainMenu!.performKeyEquivalent(with: closeEvent), "Command-W handled by menu")
+                try check(!window.isVisible, "Command-W hides the window for its only blank scratch note")
+                try check(store.session.openIDs == [lastBlank] && editors[lastBlank] === lastBlankPane,
+                    "hiding the last blank tab retains its note and native editor")
+                try check(applicationShouldHandleReopen(NSApp, hasVisibleWindows: false) && window.isVisible,
+                    "Dock reopen shows the hidden editor window")
+                try check(currentID == lastBlank && window.firstResponder === lastBlankPane.textView,
+                    "Dock reopen focuses the retained editor")
+                lastBlankPane.textView.insertText("draft", replacementRange: NSRange(location: 0, length: 0))
+                try flush()
+                lastBlankPane.textView.insertText(" \n\t", replacementRange: NSRange(location: 0, length: 5))
+                try check(NSApp.mainMenu!.performKeyEquivalent(with: closeEvent) && !window.isVisible,
+                    "Command-W uses pending edits when the last note becomes whitespace only")
+                try check(try store.text(lastBlank) == " \n\t" && !lastBlankPane.dirty,
+                    "hiding flushes pending whitespace edits")
+                _ = applicationShouldHandleReopen(NSApp, hasVisibleWindows: false)
+                lastBlankPane.textView.insertText("keep", replacementRange: NSRange(location: 0, length: 3))
+                try check(NSApp.mainMenu!.performKeyEquivalent(with: closeEvent) && window.isVisible,
+                    "Command-W on a nonblank last note keeps the window visible")
+                try check(try store.archived.contains { $0.id == lastBlank } && store.text(lastBlank) == "keep",
+                    "Command-W archives pending content in the last note")
+                let namedBlank = currentID!
+                try store.rename(namedBlank, title: "Keep this empty note")
+                try check(NSApp.mainMenu!.performKeyEquivalent(with: closeEvent) && window.isVisible
+                    && store.archived.contains { $0.id == namedBlank },
+                    "Command-W archives a named empty last note")
+                newTab(nil)
+                let extraBlank = currentID!
+                try check(NSApp.mainMenu!.performKeyEquivalent(with: closeEvent) && window.isVisible
+                    && store.session.openIDs.count == 1 && store.records[extraBlank] == nil,
+                    "Command-W discards a blank tab normally when another tab remains")
                 let report: [String: Any] = ["passed": true, "checks": checks]
                 let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
                 try data.write(to: store.root.appendingPathComponent("smoke-results.json"))

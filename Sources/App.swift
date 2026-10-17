@@ -316,7 +316,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     @objc func closeTab(_ sender: Any? = nil) {
         if let key = NSApp.keyWindow, key !== window { key.performClose(sender); return }
         guard let id = currentID else { return }
-        perform { try close(id) }
+        perform {
+            if store.session.openIDs.count == 1 {
+                // Check the saved text only after pending editor changes have been flushed.
+                try flush()
+                if try store.isBlankScratch(id) {
+                    window.orderOut(sender)
+                    return
+                }
+            }
+            try close(id)
+        }
     }
     @objc private func selectNumber(_ sender: NSMenuItem) {
         guard store.session.openIDs.indices.contains(sender.tag) else { return }
