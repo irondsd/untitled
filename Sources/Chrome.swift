@@ -7,6 +7,25 @@ enum Theme {
     static func font(_ size: CGFloat) -> NSFont {
         NSFont(name: "SFMono-Regular", size: size) ?? .monospacedSystemFont(ofSize: size, weight: .regular)
     }
+    /// The regular face of an installed family; an empty or missing family uses the default font.
+    static func font(_ size: CGFloat, family: String) -> NSFont {
+        guard !family.isEmpty else { return font(size) }
+        let manager = NSFontManager.shared
+        if let font = manager.font(withFamily: family, traits: [], weight: 5, size: size) { return font }
+        if let name = manager.availableMembers(ofFontFamily: family)?.first?.first as? String,
+           let font = NSFont(name: name, size: size) { return font }
+        return font(size)
+    }
+    /// Installed fixed-pitch families, sorted by name. Hidden system families are excluded.
+    static func monospacedFamilies() -> [String] {
+        let manager = NSFontManager.shared
+        let visible = Set(manager.availableFontFamilies)
+        let families = (manager.availableFontNames(with: .fixedPitchFontMask) ?? []).compactMap {
+            NSFont(name: $0, size: 12)?.familyName
+        }
+        return Set(families).filter { visible.contains($0) && !$0.hasPrefix(".") }
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
 }
 
 final class FlippedView: NSView {
@@ -180,8 +199,10 @@ final class EditorPane {
     let syntax: SyntaxHighlighter
     var dirty = false
     private var brightness: Double = 0.93
+    private(set) var fontFamily: String
 
-    init(text: String, fontSize: CGFloat, record: NoteRecord) {
+    init(text: String, fontSize: CGFloat, fontFamily: String = "", record: NoteRecord) {
+        self.fontFamily = fontFamily
         scroll = NSScrollView(frame: .zero)
         scroll.drawsBackground = false
         scroll.clipsToBounds = true
@@ -253,14 +274,17 @@ final class EditorPane {
         // Showing a tab, resizing or rewrapping can expose text that was never painted.
         syntax.paint()
     }
-    func applyFont(size: CGFloat) {
-        textView.font = Theme.font(size)
+    func applyFont(size: CGFloat) { applyFont(size: size, family: fontFamily) }
+    func applyFont(size: CGFloat, family: String) {
+        fontFamily = family
+        let font = Theme.font(size, family: family)
+        textView.font = font
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = 3
-        paragraph.defaultTabInterval = Theme.font(size).maximumAdvancement.width * 4
+        paragraph.defaultTabInterval = font.maximumAdvancement.width * 4
         paragraph.tabStops = []
         textView.defaultParagraphStyle = paragraph
-        textView.typingAttributes = [.font: Theme.font(size), .foregroundColor: textView.textColor ?? Theme.text, .paragraphStyle: paragraph]
+        textView.typingAttributes = [.font: font, .foregroundColor: textView.textColor ?? Theme.text, .paragraphStyle: paragraph]
         if let storage = textView.textStorage, storage.length > 0 {
             storage.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: storage.length))
         }

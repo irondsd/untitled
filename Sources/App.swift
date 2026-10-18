@@ -200,7 +200,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         guard let id = store.session.selectedID, let record = store.records[id] else { return }
         if let currentID { editors[currentID]?.scroll.removeFromSuperview() }
         if editors[id] == nil {
-            let pane = EditorPane(text: try store.text(id), fontSize: fontSize, record: record)
+            let pane = EditorPane(text: try store.text(id), fontSize: fontSize,
+                fontFamily: preferences.fontFamily, record: record)
             pane.applyAppearance(brightness: preferences.brightness, showsLineNumbers: preferences.showsLineNumbers)
             pane.textView.delegate = self
             editors[id] = pane
@@ -485,7 +486,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     private func changeFont(by delta: CGFloat) {
         fontSize = CGFloat(EditorPreferences.fontSize(Double(fontSize + delta)))
         preferencesDefaults.set(Double(fontSize), forKey: "fontSize")
-        editors.values.forEach { $0.applyFont(size: fontSize) }
+        editors.values.forEach { $0.applyFont(size: fontSize, family: preferences.fontFamily) }
     }
     @objc private func changeOpacity(_ sender: NSMenuItem) {
         var updated = preferences
@@ -494,13 +495,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     }
     func applyPreferences(_ updated: EditorPreferences) {
         let defaultChanged = preferences.defaultFontSize != updated.defaultFontSize
+        let familyChanged = preferences.fontFamily != updated.fontFamily
         preferences = updated
         preferences.save(to: preferencesDefaults)
         tint.layer?.backgroundColor = preferences.backgroundColor.cgColor
-        if defaultChanged {
-            fontSize = CGFloat(preferences.defaultFontSize)
-            changeFont(by: 0)
-        }
+        // A new family keeps any temporary zoom; a new default size replaces it.
+        if defaultChanged { fontSize = CGFloat(preferences.defaultFontSize) }
+        if defaultChanged || familyChanged { changeFont(by: 0) }
         for pane in editors.values {
             pane.applyAppearance(brightness: preferences.brightness, showsLineNumbers: preferences.showsLineNumbers)
         }

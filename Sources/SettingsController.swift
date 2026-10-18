@@ -5,6 +5,8 @@ struct EditorPreferences: Equatable {
     var backgroundBlackLevel: Double = 1
     var brightness: Double = 0.93
     var defaultFontSize: Double = 14
+    /// Font family name; empty uses the default monospaced font.
+    var fontFamily = ""
     var showsLineNumbers = true
 
     var backgroundColor: NSColor {
@@ -26,6 +28,7 @@ struct EditorPreferences: Equatable {
         backgroundBlackLevel = number("backgroundBlackLevel", fallback: backgroundBlackLevel, range: 0.5...1)
         brightness = number("fontBrightness", fallback: brightness, range: 0.2...1)
         defaultFontSize = Self.fontSize(number("defaultFontSize", fallback: defaultFontSize, range: 10...36))
+        fontFamily = defaults.string(forKey: "fontFamily") ?? fontFamily
         if defaults.object(forKey: "showsLineNumbers") != nil {
             showsLineNumbers = defaults.bool(forKey: "showsLineNumbers")
         }
@@ -35,6 +38,7 @@ struct EditorPreferences: Equatable {
         defaults.set(backgroundBlackLevel, forKey: "backgroundBlackLevel")
         defaults.set(brightness, forKey: "fontBrightness")
         defaults.set(defaultFontSize, forKey: "defaultFontSize")
+        defaults.set(fontFamily, forKey: "fontFamily")
         defaults.set(showsLineNumbers, forKey: "showsLineNumbers")
     }
 }
@@ -47,6 +51,7 @@ final class SettingsController: NSWindowController, NSTextFieldDelegate {
     private let opacityValue = NSTextField(labelWithString: "")
     private let blackLevelValue = NSTextField(labelWithString: "")
     private let brightnessValue = NSTextField(labelWithString: "")
+    private let fontPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let fontSizeField = NSTextField()
     private let fontSizeStepper = NSStepper()
     private let lineNumbersButton = NSButton(checkboxWithTitle: "Show line numbers", target: nil, action: nil)
@@ -55,7 +60,7 @@ final class SettingsController: NSWindowController, NSTextFieldDelegate {
 
     init(preferences: EditorPreferences) {
         self.preferences = preferences
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 300),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 345),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Settings"
         window.isReleasedWhenClosed = false
@@ -98,6 +103,12 @@ final class SettingsController: NSWindowController, NSTextFieldDelegate {
             value.widthAnchor.constraint(equalToConstant: 40).isActive = true
             row(title, controls: [slider, value])
         }
+        fontPopup.target = self
+        fontPopup.action = #selector(fontFamilyChanged)
+        fontPopup.setAccessibilityLabel("Font")
+        fontPopup.widthAnchor.constraint(equalToConstant: 232).isActive = true
+        buildFontMenu()
+        row("Font", controls: [fontPopup])
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         formatter.usesGroupingSeparator = false
@@ -142,6 +153,7 @@ final class SettingsController: NSWindowController, NSTextFieldDelegate {
         opacityValue.stringValue = "\(Int((preferences.opacity * 100).rounded()))%"
         blackLevelValue.stringValue = "\(Int((preferences.backgroundBlackLevel * 100).rounded()))%"
         brightnessValue.stringValue = "\(Int((preferences.brightness * 100).rounded()))%"
+        selectFont(preferences.fontFamily)
         fontSizeField.doubleValue = preferences.defaultFontSize
         fontSizeStepper.doubleValue = preferences.defaultFontSize
         lineNumbersButton.state = preferences.showsLineNumbers ? .on : .off
@@ -150,6 +162,33 @@ final class SettingsController: NSWindowController, NSTextFieldDelegate {
         if sender === opacitySlider { preferences.opacity = sender.doubleValue.rounded() / 100 }
         else if sender === blackLevelSlider { preferences.backgroundBlackLevel = sender.doubleValue.rounded() / 100 }
         else { preferences.brightness = sender.doubleValue.rounded() / 100 }
+        changed()
+    }
+    /// Lists installed monospaced families, each in its own face, after the default font.
+    private func buildFontMenu() {
+        let defaultFamily = Theme.font(13).familyName ?? ""
+        // The system monospaced fallback has a hidden family name; it is SF Mono.
+        addFont("\(defaultFamily.hasPrefix(".") || defaultFamily.isEmpty ? "SF Mono" : defaultFamily) (default)", family: "")
+        fontPopup.menu?.addItem(.separator())
+        for family in Theme.monospacedFamilies() where family != defaultFamily { addFont(family, family: family) }
+    }
+    private func addFont(_ title: String, family: String) {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.representedObject = family
+        item.attributedTitle = NSAttributedString(string: title, attributes: [.font: Theme.font(13, family: family)])
+        fontPopup.menu?.addItem(item)
+    }
+    private func selectFont(_ family: String) {
+        func item(_ family: String) -> NSMenuItem? {
+            fontPopup.itemArray.first { $0.representedObject as? String == family }
+        }
+        let target = family == Theme.font(13).familyName ? "" : family
+        // Keep a saved family visible after it is uninstalled; the editor falls back to the default.
+        if item(target) == nil { addFont("\(target) (not installed)", family: target) }
+        fontPopup.select(item(target))
+    }
+    @objc private func fontFamilyChanged(_ sender: NSPopUpButton) {
+        preferences.fontFamily = sender.selectedItem?.representedObject as? String ?? ""
         changed()
     }
     @objc private func fontSizeChanged(_ sender: NSTextField) {

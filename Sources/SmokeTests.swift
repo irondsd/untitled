@@ -188,6 +188,7 @@ extension AppDelegate {
                 updated.backgroundBlackLevel = 0.6
                 updated.brightness = 0.68
                 updated.defaultFontSize = 18.3
+                updated.fontFamily = "Menlo"
                 updated.showsLineNumbers = false
                 applyPreferences(updated)
                 try check(EditorPreferences(defaults: preferencesDefaults) == updated, "all appearance settings persist")
@@ -198,6 +199,13 @@ extension AppDelegate {
                     && EditorPreferences.fontSize(14.26) == 14.3, "font size clamps to limits and rounds to one decimal")
                 try check(fontSize == 18.3 && editors.values.allSatisfy { $0.textView.font?.pointSize == 18.3 },
                     "default font size applies to all open editors")
+                try check(editors.values.allSatisfy { $0.textView.font?.familyName == "Menlo" },
+                    "font family applies to all open editors")
+                try check(Theme.monospacedFamilies().contains("Menlo") && !Theme.monospacedFamilies().contains("Helvetica"),
+                    "font choices list installed monospaced families only")
+                try check(Theme.font(14, family: "No Such Font Family").fontName == Theme.font(14).fontName
+                    && Theme.font(14, family: "").fontName == Theme.font(14).fontName,
+                    "missing or empty font family falls back to the default font")
                 try check(!settingsPane.scroll.rulersVisible && settingsPane.scroll.contentView.contentInsets.left == 0,
                     "hiding line numbers removes the gutter")
                 try check(settingsPane.scroll.convert(.zero, from: settingsPane.textView).x == 0,
@@ -221,6 +229,16 @@ extension AppDelegate {
                 try check(command("=", code: 24) && fontSize == 19.3, "Command-plus temporarily zooms above the chosen default")
                 try check(preferences.defaultFontSize == 18.3, "zoom does not change the default font size")
                 try check(command("0", code: 29) && fontSize == 18.3, "Command-zero resets to the chosen default")
+                _ = command("=", code: 24)
+                updated.fontFamily = "Courier"
+                applyPreferences(updated)
+                try check(fontSize == 19.3 && settingsPane.textView.font?.familyName == "Courier"
+                    && settingsPane.textView.font?.pointSize == 19.3, "changing the font family keeps temporary zoom")
+                try check(settingsPane.textView.string == settingsText && settingsPane.textView.undoManager?.canUndo == true,
+                    "changing the font family preserves text and undo")
+                _ = command("0", code: 29)
+                updated.fontFamily = "Menlo"
+                applyPreferences(updated)
                 let typingColor = settingsPane.textView.typingAttributes[.foregroundColor] as! NSColor
                 try check(abs(typingColor.usingColorSpace(.genericGray)!.whiteComponent - 0.68) < 0.001,
                     "zoom preserves brightness for newly typed text")
@@ -236,6 +254,9 @@ extension AppDelegate {
                 let inheritedPane = editors[currentID!]!
                 try check(inheritedPane.textView.font?.pointSize == 18.3 && inheritedPane.scroll.rulersVisible,
                     "new tabs inherit font size and line number visibility")
+                try check(inheritedPane.textView.font?.familyName == "Menlo"
+                    && (inheritedPane.textView.typingAttributes[.font] as? NSFont)?.familyName == "Menlo",
+                    "new tabs inherit the font family")
                 try check(abs(inheritedPane.textView.textColor!.usingColorSpace(.genericGray)!.whiteComponent - 0.68) < 0.001,
                     "new tabs inherit brightness")
                 try check(command(",", code: 43) && settingsController?.window?.isVisible == true,

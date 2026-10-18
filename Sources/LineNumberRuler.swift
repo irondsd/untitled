@@ -40,11 +40,17 @@ final class LineNumberRuler: NSRulerView {
     deinit { for observer in observers { NotificationCenter.default.removeObserver(observer) } }
 
     func refreshMetrics() {
-        let font = Theme.font(max(10, (editor?.font?.pointSize ?? 14) - 1))
+        let font = labelFont(for: editor?.font ?? Theme.font(14))
         let width = (String(lines.starts.count) as NSString).size(withAttributes: [.font: font]).width
         let thickness = max(44, ceil(width + 24))
         if ruleThickness != thickness { ruleThickness = thickness; onThicknessChange?() }
         needsDisplay = true
+    }
+
+    /// Labels use the editor's font family, one point smaller.
+    private func labelFont(for textFont: NSFont) -> NSFont {
+        let size = max(10, textFont.pointSize - 1)
+        return NSFont(descriptor: textFont.fontDescriptor, size: size) ?? Theme.font(size)
     }
 
     override func draw(_ dirtyRect: NSRect) { drawHashMarksAndLabels(in: dirtyRect) }
@@ -70,7 +76,7 @@ final class LineNumberRuler: NSRulerView {
         NSRect(x: bounds.width - 1, y: rect.minY, width: 1, height: rect.height).fill()
         guard let editor, let manager = editor.layoutManager, let container = editor.textContainer else { return }
         let textFont = editor.font ?? Theme.font(14)
-        let font = Theme.font(max(10, textFont.pointSize - 1))
+        let font = labelFont(for: textFont)
         let origin = editor.textContainerOrigin
         let visible = editor.visibleRect.offsetBy(dx: -origin.x, dy: -origin.y)
         let glyphRange = manager.glyphRange(forBoundingRect: visible, in: container)
