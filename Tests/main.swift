@@ -406,10 +406,63 @@ do {
     try check(forcedPlain.language == .plain && forcedPlain.spans.isEmpty, "choosing plain text removes highlighting")
     try check(SyntaxEngine.detectLanguage("name: api\nport: 80") == .yaml && SyntaxEngine.detectLanguage("hello there") == .plain,
         "detection alone reports the language")
-    try check(NoteLanguage.allCases.map(\.fileExtension) == ["txt", "sh", "css", "html", "js", "json", "md", "xml", "yaml"], "each format suggests a file extension")
+    try check(NoteLanguage.allCases.map(\.fileExtension) == ["txt", "sh", "css", "csv", "html", "js", "json", "md", "tsv", "xml", "yaml"], "each format suggests a file extension")
     func noOverlap(_ result: SyntaxResult, _ source: String) -> Bool {
         result.spans.allSatisfy { $0.range.location >= 0 && $0.range.length > 0 && NSMaxRange($0.range) <= (source as NSString).length }
             && zip(result.spans, result.spans.dropFirst()).allSatisfy { NSMaxRange($0.range) <= $1.range.location }
+    }
+
+    for (language, separator) in [(NoteLanguage.csv, ","), (.tsv, "\t")] {
+        let table = "\u{FEFF}name\(separator)city\(separator)count\r\n\"Ada 🧩\"\(separator)\"Paris\(separator)France\"\(separator)12\r\n\"Grace\r\nHopper\"\(separator)\"said \"\"hello\"\"\"\(separator)7\r\n"
+        let result = SyntaxEngine.analyze(table)
+        try check(result.language == language, "detects \(language) with BOM, Unicode, CRLF and quoted multiline fields")
+        for (needle, column) in [("name", 0), ("Ada", 0), ("Grace", 0), ("Hopper", 0), ("city", 1), ("Paris", 1), ("France", 1), ("hello", 1), ("count", 2), ("12", 2), ("7", 2)] {
+            try check(kinds(result, table, at: needle) == [.column(column)], "\(language) keeps column \(column) color at \(needle)")
+        }
+        try check(noOverlap(result, table), "\(language) ranges are ordered and valid UTF-16")
+        try check(result.spans.filter { $0.kind == .marker }.count == 6, "\(language) only marks separators outside quotes")
+        let emptyCells = "a\(separator)\(separator)c\(separator)\nd\(separator)e\(separator)\(separator)f"
+        let emptyResult = SyntaxEngine.analyze(emptyCells, language: language)
+        try check(kinds(emptyResult, emptyCells, at: "c") == [.column(2)]
+            && kinds(emptyResult, emptyCells, at: "f") == [.column(3)], "\(language) empty and trailing fields retain column positions")
+        let wide = (0..<9).map { "value\($0)" }.joined(separator: separator)
+        try check(kinds(SyntaxEngine.analyze(wide, language: language), wide, at: "value6") == [.column(0)], "\(language) cycles colors after six columns")
+        for unfinished in ["", "a", "\"a\(separator)b\nnext", "a\(separator)\"b\"oops\(separator)c", "a\(separator)b\nc", "a\"b\(separator)c", "\(separator)\(separator)\r\n", "\"\"\"\""] {
+            try check(noOverlap(SyntaxEngine.analyze(unfinished, language: language), unfinished), "manual \(language) tolerates incomplete edits: \(unfinished.debugDescription)")
+        }
+        let partial = "name\(separator)city\(separator)count\nAda\(separator)Paris\(separator)12\nGrace\(separator)\"unfinished"
+        try check(SyntaxEngine.analyze(partial).language == language, "\(language) retains detection during an incomplete last record")
+        let largeTable = "name\(separator)city\(separator)count\nAda\(separator)Paris\(separator)12\n\""
+            + String(repeating: "🧩x", count: 20_000) + "\"\(separator)London\(separator)7"
+        try check(SyntaxEngine.analyze(largeTable).language == language, "\(language) survives detection sampling inside a large quoted field")
+        let blankRows = "a\(separator)b\(separator)c\r\r1\(separator)2\(separator)3\r\r"
+        let blankResult = SyntaxEngine.analyze(blankRows)
+        try check(blankResult.language == language && kinds(blankResult, blankRows, at: "1") == [.column(0)],
+            "\(language) skips blank records and handles CR line endings")
+        var csvWork = 0
+        let cancelled = SyntaxEngine.analyze(String(repeating: table, count: 100), language: language,
+            cancelled: { csvWork += 1; return csvWork > 80 })
+        try check(cancelled.spans.isEmpty && csvWork > 80, "\(language) cancels scanning in progress")
+        try loaded.setSyntax(first, language: language)
+        try check(try NotesStore(root: root).records[first]?.syntaxOverride == language, "\(language) manual choice persists")
+        try check(SyntaxEngine.fileExtension(for: table, language: language) == language.rawValue, "\(language) suggests its Save As extension")
+    }
+    for (snippet, language) in [
+        ("name,age\nAda,36", NoteLanguage.csv),
+        ("name,city\nAda,Paris\nGrace,New York", .csv),
+        ("name\tcity\nAda\tParis", .tsv),
+        ("name,role\tcount\nAda,dev\t12", .tsv),
+        ("Hello, Alex\nThanks, Sam", .plain),
+        ("one,two,three", .plain),
+        ("name,age\nAda,36,extra", .plain),
+        ("name,age\n\"unclosed,36", .plain),
+        ("# Table\n\nname,age\nAda,36", .markdown),
+        ("```csv\nname,age\nAda,36\n```", .markdown),
+        ("values: |\n  name,age\n  Ada,36", .yaml),
+        ("{\"a\": 1, \"b\": 2}\n", .json),
+        ("const a = [1,2,3];\nconst b = [4,5,6];", .javascript)
+    ] {
+        try check(SyntaxEngine.analyze(snippet).language == language, "delimited detection respects table structure and other formats: \(snippet.debugDescription)")
     }
 
     let json = #"""
@@ -762,6 +815,23 @@ do {
     try check(ranges(large.spans(in: NSRange(location: 150_002, length: 10)))
         == [NSRange(location: 150_002, length: 2), NSRange(location: 150_005, length: 3), NSRange(location: 150_010, length: 2)],
         "span index finds a window deep in a large note")
+    let writable = root.appendingPathComponent("external.txt")
+    try ExternalFileWriter.write("saved\n", to: writable)
+    try check(try String(contentsOf: writable, encoding: .utf8) == "saved\n", "external writes to writable files need no administrator")
+    let locked = root.appendingPathComponent("locked", isDirectory: true)
+    try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+    try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: locked.path)
+    defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
+    var lockedError: Error?
+    do { try "x".write(to: locked.appendingPathComponent("hosts"), atomically: true, encoding: .utf8) } catch { lockedError = error }
+    try check(lockedError.map(ExternalFileWriter.isPermissionDenied) == true, "writes into a read-only folder are recognized as permission failures")
+    var missingError: Error?
+    do { try "x".write(to: root.appendingPathComponent("missing/file.txt"), atomically: true, encoding: .utf8) } catch { missingError = error }
+    try check(missingError.map(ExternalFileWriter.isPermissionDenied) == false, "a missing folder does not ask for an administrator password")
+    let awkward = ExternalFileWriter.scriptSource(copying: "/tmp/a \"quoted\" \\ path", to: "/etc/it's \"hosts\"")
+    var compileError: NSDictionary?
+    try check(NSAppleScript(source: awkward)?.compileAndReturnError(&compileError) == true && compileError == nil,
+        "administrator save script compiles with quotes and backslashes in paths")
     print("\n\(count) storage, line-index, find and syntax checks passed")
 } catch {
     fputs("FAIL: \(error.localizedDescription)\n", stderr)

@@ -33,7 +33,7 @@ Extensions are case-insensitive. The generic text/source registrations also cove
 
 ## Syntax and file contents
 
-Opening a format does not require a matching highlighter. Syntax detection uses the contents, with manual modes for Bash, CSS, HTML, JavaScript/TypeScript/JSX, JSON, Markdown, XML, YAML and Plain Text. For example, an XML plist uses XML colors, while an INI file can be edited as plain text. JSONC, JSON5 and newline-delimited JSON have no dedicated modes.
+Opening a format does not require a matching highlighter. Syntax detection uses the contents, with manual modes for Bash, CSS, CSV, HTML, JavaScript/TypeScript/JSX, JSON, Markdown, TSV, XML, YAML and Plain Text. CSV/TSV use repeating column colors and support quoted fields; single-row or irregular tables can be selected manually. For example, an XML plist uses XML colors, while an INI file can be edited as plain text. JSONC, JSON5 and newline-delimited JSON have no dedicated modes.
 
 Plists may contain XML, older textual syntax or binary data. XML and readable text plists open as source. Binary plists are rejected with a specific message, without conversion or changes to the original. The same text-content checks apply to every registered extension; registering `.ts` does not make binary video editable.
 

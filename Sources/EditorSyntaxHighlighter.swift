@@ -116,6 +116,12 @@ final class SyntaxHighlighter {
         case .link: rgb = (0.52, 0.85, 0.92)
         case .tag: rgb = (0.95, 0.58, 0.62)
         case .attribute: rgb = (0.93, 0.79, 0.55)
+        case .column(let column):
+            let colors: [(CGFloat, CGFloat, CGFloat)] = [
+                (0.56, 0.79, 1.0), (0.67, 0.86, 0.64), (1.0, 0.78, 0.54),
+                (0.84, 0.72, 1.0), (0.52, 0.85, 0.92), (0.95, 0.58, 0.62)
+            ]
+            rgb = colors[column % colors.count]
         }
         let scale = CGFloat(brightness / 0.93)
         let value = NSColor(calibratedRed: min(1, rgb.0 * scale), green: min(1, rgb.1 * scale), blue: min(1, rgb.2 * scale), alpha: 1)

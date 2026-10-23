@@ -58,9 +58,35 @@ final class ChromeWindowDrag {
 
 final class HeaderView: NSView {
     private let drag = ChromeWindowDrag()
+    var onOpenFiles: (([URL]) -> Bool)?
     var leadingIsInactive = false { didSet { needsDisplay = true } }
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        // Descendants (tab labels, title and buttons) share this drop destination.
+        registerForDraggedTypes([.fileURL])
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override var isFlipped: Bool { true }
     override var mouseDownCanMoveWindow: Bool { false }
+    private func droppedFiles(_ sender: NSDraggingInfo) -> [URL] {
+        guard onOpenFiles != nil, sender.draggingSourceOperationMask.contains(.copy) else { return [] }
+        let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        return urls.filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
+    }
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        let files = droppedFiles(sender)
+        guard !files.isEmpty else { return [] }
+        sender.numberOfValidItemsForDrop = files.count
+        return .copy
+    }
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation { draggingEntered(sender) }
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool { !droppedFiles(sender).isEmpty }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let files = droppedFiles(sender)
+        guard !files.isEmpty else { return false }
+        return onOpenFiles?(files) ?? false
+    }
     override func mouseDown(with event: NSEvent) {
         if event.clickCount == 2 { window?.performZoom(nil) }
         else { drag.begin(event, in: window) }

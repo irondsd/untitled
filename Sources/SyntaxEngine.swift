@@ -1,7 +1,7 @@
 import Foundation
 
 /// Case order is the Syntax menu order; raw values are stored in note metadata.
-enum NoteLanguage: String, CaseIterable { case plain, bash, css, html, javascript, json, markdown, xml, yaml }
+enum NoteLanguage: String, CaseIterable { case plain, bash, css, csv, html, javascript, json, markdown, tsv, xml, yaml }
 extension NoteLanguage {
     var displayName: String {
         switch self {
@@ -14,6 +14,8 @@ extension NoteLanguage {
         case .json: return "JSON"
         case .html: return "HTML"
         case .css: return "CSS"
+        case .csv: return "CSV"
+        case .tsv: return "TSV"
         }
     }
     /// Suggested for Save As when the note title has no extension of its own.
@@ -28,10 +30,16 @@ extension NoteLanguage {
         case .json: return "json"
         case .html: return "html"
         case .css: return "css"
+        case .csv: return "csv"
+        case .tsv: return "tsv"
         }
     }
 }
-enum SyntaxKind { case heading, marker, key, string, number, literal, comment, code, emphasis, link, keyword, type, function, tag, attribute }
+enum SyntaxKind: Hashable {
+    case heading, marker, key, string, number, literal, comment, code, emphasis, link, keyword, type, function, tag, attribute
+    /// Delimited text cycles through six column colors, independent of field contents.
+    case column(Int)
+}
 struct SyntaxSpan {
     let range: NSRange
     let kind: SyntaxKind
@@ -52,7 +60,7 @@ protocol SyntaxDefinition {
 
 /// A tolerant source highlighter, not a validator or renderer. Add formats to this registry.
 enum SyntaxEngine {
-    static let definitions: [SyntaxDefinition.Type] = [MarkdownSyntax.self, YAMLSyntax.self, JSONSyntax.self, JavaScriptSyntax.self, HTMLSyntax.self, XMLSyntax.self, CSSSyntax.self, BashSyntax.self]
+    static let definitions: [SyntaxDefinition.Type] = [MarkdownSyntax.self, YAMLSyntax.self, JSONSyntax.self, JavaScriptSyntax.self, HTMLSyntax.self, XMLSyntax.self, CSSSyntax.self, BashSyntax.self, CSVSyntax.self, TSVSyntax.self]
 
     /// Pass `language` to skip detection and tokenize with a manually chosen format.
     static func analyze(_ text: String, using definitions: [SyntaxDefinition.Type] = SyntaxEngine.definitions,

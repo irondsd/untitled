@@ -755,7 +755,7 @@ extension AppDelegate {
                 try restore(scriptID)
                 try await waitForSyntax(editors[scriptID]!)
                 try check(editors[scriptID]!.syntax.language == .yaml, "chosen format survives archiving and restoring")
-                try check(["Plain Text", "Bash", "CSS", "HTML", "JavaScript / TypeScript", "JSON", "Markdown", "XML", "YAML"].allSatisfy { title in
+                try check(["Plain Text", "Bash", "CSS", "CSV", "HTML", "JavaScript / TypeScript", "JSON", "Markdown", "TSV", "XML", "YAML"].allSatisfy { title in
                     syntaxMenu.items.contains { $0.title == title } }, "Syntax menu lists every format")
                 chooseSyntax("HTML")
                 try await waitForSyntax(editors[scriptID]!)
@@ -777,6 +777,50 @@ extension AppDelegate {
                 try check(editors[scriptID]!.syntax.language == .javascript && store.records[scriptID]?.syntax == nil
                     && syntaxMenu.items.first!.title.contains("JavaScript"), "Detect Automatically returns to the detected format")
                 // Open real file fixtures only inside the disposable test folder.
+                for (language, separator) in [(NoteLanguage.csv, ","), (.tsv, "\t")] {
+                    let tableURL = store.root.appendingPathComponent("example.\(language.fileExtension)")
+                    let tableText = "name\(separator)city\(separator)count\r\n\"Ada 🧩\"\(separator)\"Paris\(separator)France\"\(separator)12\r\nGrace\(separator)London\(separator)7"
+                    try tableText.write(to: tableURL, atomically: true, encoding: .utf8)
+                    try openFile(tableURL)
+                    let tableID = currentID!, tablePane = editors[currentID!]!, tableView = editors[currentID!]!.textView
+                    try await waitForSyntax(tablePane)
+                    @MainActor func tableColor(_ needle: String) -> NSColor? {
+                        tableView.layoutManager?.temporaryAttribute(.foregroundColor,
+                            atCharacterIndex: (tableView.string as NSString).range(of: needle).location, effectiveRange: nil) as? NSColor
+                    }
+                    try check(tablePane.syntax.language == language && tableView.string == tableText,
+                        "opened \(language) detects its format without changing source")
+                    let firstColumn = tableColor("Ada"), secondColumn = tableColor("Paris")
+                    try check(firstColumn != nil && secondColumn != nil && firstColumn != secondColumn
+                        && firstColumn == tableColor("Grace") && secondColumn == tableColor("France"),
+                        "\(language) uses stable column colors and protects quoted separators")
+                    tablePane.applyAppearance(brightness: 0.7, showsLineNumbers: true)
+                    try check(tableColor("Ada") != nil && tableColor("Ada") != firstColumn,
+                        "\(language) column colors follow font brightness")
+                    tableView.insertText("13", replacementRange: (tableText as NSString).range(of: "12"))
+                    try await waitForSyntax(tablePane)
+                    try flush()
+                    try check(try String(contentsOf: tableURL, encoding: .utf8) == tableText,
+                        "\(language) highlighting and autosave leave the external file intact")
+                    tableView.undoManager?.undo()
+                    try await waitForSyntax(tablePane)
+                    try check(tableView.string == tableText && tablePane.syntax.language == language,
+                        "\(language) highlighting preserves native typing undo")
+                    chooseSyntax("Plain Text")
+                    try await waitForSyntax(tablePane)
+                    try check(tableColor("Ada") == nil, "Plain Text clears \(language) column colors")
+                    chooseSyntax(language.displayName)
+                    try await waitForSyntax(tablePane)
+                    try check(tablePane.syntax.language == language && tableColor("Ada") != nil,
+                        "Syntax menu enables \(language) column colors")
+                    // Keep an unsaved edit so closing archives this external working copy.
+                    tableView.insertText("13", replacementRange: (tableView.string as NSString).range(of: "12"))
+                    try close(tableID)
+                    try restore(tableID)
+                    try await waitForSyntax(editors[tableID]!)
+                    try check(editors[tableID]!.syntax.language == language && store.records[tableID]?.syntaxOverride == language,
+                        "\(language) manual choice survives archive restoration")
+                }
                 let jsonURL = store.root.appendingPathComponent("example.json")
                 let jsonText = "{\"name\":\"🧩\",\"enabled\":true,\"count\":42}"
                 try jsonText.write(to: jsonURL, atomically: true, encoding: .utf8)
@@ -935,6 +979,74 @@ extension AppDelegate {
                 try check(NSApp.mainMenu!.performKeyEquivalent(with: closeEvent) && window.isVisible
                     && store.session.openIDs.count == 1 && store.records[extraBlank] == nil,
                     "Command-W discards a blank tab normally when another tab remains")
+                let dropHeader = root.subviews.compactMap { $0 as? HeaderView }.first!
+                @MainActor func dropDestination(at point: NSPoint) -> NSView? {
+                    guard let host = root.superview else { return nil }
+                    var view = host.hitTest(root.convert(point, to: host))
+                    while let candidate = view {
+                        if candidate.registeredDraggedTypes.contains(.fileURL) { return candidate }
+                        view = candidate.superview
+                    }
+                    return nil
+                }
+                root.layoutSubtreeIfNeeded()
+                try check(dropDestination(at: NSPoint(x: 200, y: 19)) === dropHeader,
+                    "single-note title routes file drops to the header")
+                let beforeDropID = currentID!
+                let beforeDropPane = editors[beforeDropID]!
+                beforeDropPane.textView.insertText("Pending before drop", replacementRange: beforeDropPane.textView.selectedRange())
+                let droppedURL = store.root.appendingPathComponent("dropped.txt")
+                let otherDroppedURL = store.root.appendingPathComponent("other-dropped.txt")
+                try "Dropped contents".write(to: droppedURL, atomically: true, encoding: .utf8)
+                try "Other contents".write(to: otherDroppedURL, atomically: true, encoding: .utf8)
+                let fileDrag = SmokeFileDrag(urls: [droppedURL], window: window)
+                defer { fileDrag.draggingPasteboard.releaseGlobally() }
+                try check(dropHeader.draggingEntered(fileDrag) == .copy
+                    && dropHeader.draggingUpdated(fileDrag) == .copy && dropHeader.prepareForDragOperation(fileDrag),
+                    "header accepts a file with the copy cursor")
+                try check(currentID == beforeDropID, "hovering a file does not switch tabs")
+                try check(dropHeader.performDragOperation(fileDrag), "dropping a file on the header opens it")
+                let droppedID = currentID!
+                try check(store.records[droppedID]?.filePath == droppedURL.path
+                    && editors[droppedID]?.textView.string == "Dropped contents",
+                    "dropped file opens its contents in an associated tab")
+                try check(try store.text(beforeDropID) == "Pending before drop" && !beforeDropPane.dirty,
+                    "opening a dropped file flushes pending edits")
+                try check(editors[beforeDropID] === beforeDropPane && beforeDropPane.undo.canUndo,
+                    "file drops retain the previous editor and undo history")
+                root.layoutSubtreeIfNeeded()
+                try check(dropDestination(at: NSPoint(x: 200, y: 19)) === dropHeader
+                    && dropDestination(at: NSPoint(x: root.bounds.width - 17, y: 19)) === dropHeader,
+                    "tab labels and the new-tab button route file drops to the header")
+                try check(dropDestination(at: NSPoint(x: 200, y: 100)) !== dropHeader,
+                    "editor file drops remain outside the header destination")
+                try switchTab(beforeDropID)
+                let countBeforeDuplicate = store.session.openIDs.count
+                try check(dropHeader.performDragOperation(fileDrag) && currentID == droppedID
+                    && store.session.openIDs.count == countBeforeDuplicate,
+                    "dropping an open file focuses its existing tab")
+                fileDrag.draggingPasteboard.clearContents()
+                fileDrag.draggingPasteboard.writeObjects([droppedURL, store.root, otherDroppedURL] as [NSURL])
+                try check(dropHeader.draggingEntered(fileDrag) == .copy && fileDrag.numberOfValidItemsForDrop == 2,
+                    "mixed file and folder drops count only regular files")
+                try check(dropHeader.performDragOperation(fileDrag)
+                    && store.session.openIDs.count == countBeforeDuplicate + 1
+                    && store.records[currentID!]?.filePath == otherDroppedURL.path,
+                    "multiple dropped files open in order and skip folders")
+                try check(try String(contentsOf: droppedURL, encoding: .utf8) == "Dropped contents",
+                    "opening dropped files leaves the originals unchanged")
+                fileDrag.draggingSourceOperationMask = .move
+                try check(dropHeader.draggingEntered(fileDrag).isEmpty && !dropHeader.performDragOperation(fileDrag),
+                    "header never accepts a file move operation")
+                fileDrag.draggingSourceOperationMask = .copy
+                fileDrag.draggingPasteboard.clearContents()
+                fileDrag.draggingPasteboard.writeObjects([store.root as NSURL])
+                try check(dropHeader.draggingEntered(fileDrag).isEmpty && !dropHeader.prepareForDragOperation(fileDrag)
+                    && !dropHeader.performDragOperation(fileDrag), "folder-only drops are rejected")
+                fileDrag.draggingPasteboard.clearContents()
+                fileDrag.draggingPasteboard.setString("https://example.com/file.txt", forType: .string)
+                try check(dropHeader.draggingEntered(fileDrag).isEmpty && !dropHeader.performDragOperation(fileDrag),
+                    "header rejects text and web addresses")
                 let report: [String: Any] = ["passed": true, "checks": checks]
                 let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
                 try data.write(to: store.root.appendingPathComponent("smoke-results.json"))
@@ -950,4 +1062,31 @@ extension AppDelegate {
             }
         }
     }
+}
+
+/// A private pasteboard exercises the native destination callbacks without touching the user's clipboard.
+@MainActor
+private final class SmokeFileDrag: NSObject, NSDraggingInfo {
+    let draggingPasteboard = NSPasteboard.withUniqueName()
+    let draggingDestinationWindow: NSWindow?
+    var draggingSourceOperationMask: NSDragOperation = .copy
+    var draggingLocation: NSPoint { .zero }
+    var draggedImageLocation: NSPoint { .zero }
+    nonisolated var draggedImage: NSImage? { nil }
+    var draggingSource: Any? { nil }
+    var draggingSequenceNumber: Int { 1 }
+    var draggingFormation: NSDraggingFormation = .none
+    var animatesToDestination = false
+    var numberOfValidItemsForDrop = 0
+    var springLoadingHighlight: NSSpringLoadingHighlight { .none }
+    init(urls: [URL], window: NSWindow) {
+        draggingDestinationWindow = window
+        super.init()
+        draggingPasteboard.writeObjects(urls as [NSURL])
+    }
+    func slideDraggedImage(to screenPoint: NSPoint) {}
+    func resetSpringLoading() {}
+    func enumerateDraggingItems(options enumOpts: NSDraggingItemEnumerationOptions, for view: NSView?,
+        classes classArray: [AnyClass], searchOptions: [NSPasteboard.ReadingOptionKey: Any],
+        using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void) {}
 }

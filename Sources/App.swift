@@ -99,6 +99,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         root.addSubview(tint)
         header.wantsLayer = true
         header.layer?.backgroundColor = NSColor.clear.cgColor
+        header.onOpenFiles = { [weak self] urls in
+            guard let self else { return false }
+            do {
+                for url in urls { try self.openFile(url) }
+                self.window.makeKeyAndOrderFront(nil)
+                return true
+            } catch {
+                self.showError(error)
+                return false
+            }
+        }
         root.addSubview(header)
         root.addSubview(findController.panel)
         findController.onVisibilityChange = { [weak self] in
@@ -441,7 +452,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         perform {
             try flush()
             let url = URL(fileURLWithPath: path)
-            try pane.textView.string.write(to: url, atomically: true, encoding: .utf8)
+            try ExternalFileWriter.write(pane.textView.string, to: url)
             try store.associateFile(id, url: url, text: pane.textView.string)
             rebuildTabs()
         }
@@ -456,7 +467,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             guard response == .OK, let url = panel.url, let self else { return }
             self.perform {
                 try self.flush()
-                try pane.textView.string.write(to: url, atomically: true, encoding: .utf8)
+                try ExternalFileWriter.write(pane.textView.string, to: url)
                 try self.store.associateFile(id, url: url, text: pane.textView.string)
                 self.rebuildTabs()
             }
@@ -717,7 +728,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         perform { for url in urls { try openFile(url) }; window.makeKeyAndOrderFront(nil) }
     }
     func perform(_ work: () throws -> Void) {
-        do { try work() } catch { showError(error) }
+        do { try work() } catch CocoaError.userCancelled {} catch { showError(error) }
     }
     func showError(_ error: Error) {
         let alert = NSAlert()
