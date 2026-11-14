@@ -36,13 +36,31 @@ struct MarkdownSyntax: SyntaxDefinition {
         return distinctive ? 80 : 50
     }
 
-    static func highlight(_ source: SyntaxSource) -> [SyntaxSpan] {
+    static func highlight(_ source: SyntaxSource) -> [SyntaxSpan] { tokenize(source).spans }
+
+    static func tokenize(_ source: SyntaxSource) -> (spans: [SyntaxSpan], styles: [SyntaxStyleSpan]) {
         let lines = source.lines
-        var result: [SyntaxSpan] = [], fenced: (character: Character, count: Int)?
+        var result: [SyntaxSpan] = [], styles: [SyntaxStyleSpan] = []
+        var fenced: (character: Character, count: Int, start: Int)?
+        // Only an ordinary paragraph line can become a setext heading title.
+        var previousIsParagraph = false
         let front = YAMLSyntax.frontMatterEnd(in: source)
-        func add(_ range: NSRange, _ kind: SyntaxKind, _ line: SyntaxLine) {
-            if range.length > 0 { result.append(SyntaxSpan(range: NSRange(location: line.offset + range.location, length: range.length), kind: kind)) }
+        func absolute(_ range: NSRange, _ line: SyntaxLine) -> NSRange {
+            NSRange(location: line.offset + range.location, length: range.length)
         }
+        func add(_ range: NSRange, _ kind: SyntaxKind, _ line: SyntaxLine) {
+            if range.length > 0 { result.append(SyntaxSpan(range: absolute(range, line), kind: kind)) }
+        }
+        func style(_ range: NSRange, _ style: SyntaxStyle, _ line: SyntaxLine) {
+            if range.length > 0 { styles.append(SyntaxStyleSpan(range: absolute(range, line), style: style)) }
+        }
+        /// Dims `length` delimiter characters at both ends of a match.
+        func delimiters(_ range: NSRange, _ length: Int, _ line: SyntaxLine) {
+            guard range.length >= length * 2 else { return }
+            add(NSRange(location: range.location, length: length), .markup, line)
+            add(NSRange(location: NSMaxRange(range) - length, length: length), .markup, line)
+        }
+        func whole(_ line: SyntaxLine) -> NSRange { NSRange(location: 0, length: line.length) }
         if let front {
             result += YAMLSyntax.spans(in: Array(lines[0...front]), source: source)
         }
@@ -51,25 +69,51 @@ struct MarkdownSyntax: SyntaxDefinition {
             if let front, index <= front { continue }
             let fenceMatch = source.first(fence, line.text)
             if let active = fenced {
-                add(NSRange(location: 0, length: line.length), .code, line)
+                add(whole(line), .code, line)
                 if let match = fenceMatch {
                     let delimiter = (line.text as NSString).substring(with: match.range(at: 1))
                     let suffix = (line.text as NSString).substring(with: match.range(at: 2))
-                    if delimiter.first == active.character, delimiter.count >= active.count, suffix.trimmingCharacters(in: .whitespaces).isEmpty { fenced = nil }
+                    if delimiter.first == active.character, delimiter.count >= active.count, suffix.trimmingCharacters(in: .whitespaces).isEmpty {
+                        fenced = nil
+                        add(match.range(at: 1), .markup, line)
+                        styles.append(SyntaxStyleSpan(range: NSRange(location: active.start, length: line.offset + line.length - active.start), style: .codeBlock))
+                    }
                 }
+                if fenced != nil, index == lines.count - 1 {
+                    // An unclosed fence runs to the end of the note.
+                    styles.append(SyntaxStyleSpan(range: NSRange(location: active.start, length: line.offset + line.length - active.start), style: .codeBlock))
+                }
+                previousIsParagraph = false
                 continue
             }
             if let match = fenceMatch {
                 let delimiter = (line.text as NSString).substring(with: match.range(at: 1))
-                fenced = (delimiter.first!, delimiter.count)
-                add(NSRange(location: 0, length: line.length), .code, line); continue
+                fenced = (delimiter.first!, delimiter.count, line.offset)
+                add(whole(line), .code, line)
+                add(match.range(at: 1), .markup, line)
+                if index == lines.count - 1 { style(whole(line), .codeBlock, line) }
+                previousIsParagraph = false
+                continue
             }
-            if source.first(heading, line.text) != nil { add(NSRange(location: 0, length: line.length), .heading, line) }
-            if source.first(rule, line.text) != nil { add(NSRange(location: 0, length: line.length), .marker, line); continue }
+            let isParagraph = previousIsParagraph
+            previousIsParagraph = false
+            if let match = source.first(heading, line.text) {
+                add(whole(line), .heading, line)
+                let marks = line.text.drop(while: { $0 == " " }).prefix(while: { $0 == "#" }).count
+                add(match.range, .markup, line)
+                style(whole(line), .heading(marks), line)
+            }
+            if source.first(rule, line.text) != nil { add(whole(line), .marker, line); continue }
             if index > 0, source.first(setext, line.text) != nil, !lines[index - 1].trimmed.isEmpty {
-                add(NSRange(location: 0, length: lines[index - 1].length), .heading, lines[index - 1])
-                add(NSRange(location: 0, length: line.length), .marker, line); continue
+                add(whole(lines[index - 1]), .heading, lines[index - 1])
+                add(whole(line), .markup, line)
+                if isParagraph {
+                    style(whole(lines[index - 1]), .setextHeading(line.trimmed.hasPrefix("=") ? 1 : 2), lines[index - 1])
+                    style(whole(line), .setextUnderline, line)
+                }
+                continue
             }
+            previousIsParagraph = !line.trimmed.isEmpty && source.first(heading, line.text) == nil
             for expression in [list, quote] {
                 if let match = source.first(expression, line.text) { add(match.range, .marker, line) }
             }
@@ -77,9 +121,16 @@ struct MarkdownSyntax: SyntaxDefinition {
             for (expression, kind) in [(strong, SyntaxKind.emphasis), (emphasis, .emphasis), (link, .link), (reference, .link)] {
                 for match in source.matches(expression, line.text) where !codes.contains(where: { NSIntersectionRange($0.range, match.range).length > 0 }) {
                     add(match.range, kind, line)
+                    if expression === strong { delimiters(match.range, 2, line); style(match.range, .strong, line) }
+                    if expression === emphasis { delimiters(match.range, 1, line); style(match.range, .emphasis, line) }
                 }
             }
-            for match in codes { add(match.range, .code, line) }
+            for match in codes {
+                add(match.range, .code, line)
+                delimiters(match.range, match.range(at: 1).length, line)
+                style(match.range, .inlineCode, line)
+            }
         }
-        return result
-    }}
+        return (result, styles)
+    }
+}

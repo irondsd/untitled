@@ -37,6 +37,8 @@ extension NoteLanguage {
 }
 enum SyntaxKind: Hashable {
     case heading, marker, key, string, number, literal, comment, code, emphasis, link, keyword, type, function, tag, attribute
+    /// Characters that only format other text, such as Markdown's `#`, `**` and backticks; drawn dimmed.
+    case markup
     /// Delimited text cycles through six column colors, independent of field contents.
     case column(Int)
 }
@@ -44,9 +46,24 @@ struct SyntaxSpan {
     let range: NSRange
     let kind: SyntaxKind
 }
+/// Typography beyond color. Formats describe structure; the editor decides fonts, spacing and backgrounds.
+enum SyntaxStyle: Hashable {
+    /// A whole `#` heading line, level 1–6.
+    case heading(Int)
+    /// The title line above a `===` (level 1) or `---` (level 2) underline, and the underline itself.
+    case setextHeading(Int), setextUnderline
+    /// A fenced code block from the opening fence line to the closing one, inclusive.
+    case codeBlock
+    case inlineCode, strong, emphasis
+}
+struct SyntaxStyleSpan {
+    let range: NSRange
+    let style: SyntaxStyle
+}
 struct SyntaxResult {
     let language: NoteLanguage
     let spans: [SyntaxSpan]
+    var styles: [SyntaxStyleSpan] = []
 }
 
 /// Stateless format modules return semantic tokens; they never know about AppKit, colors or storage.
@@ -56,6 +73,11 @@ protocol SyntaxDefinition {
     /// Strictly greater confidence wins; registry order breaks ties deterministically.
     static func confidence(in source: SyntaxSource) -> Int
     static func highlight(_ source: SyntaxSource) -> [SyntaxSpan]
+    /// Colors plus optional typography, from one pass. Most formats only color.
+    static func tokenize(_ source: SyntaxSource) -> (spans: [SyntaxSpan], styles: [SyntaxStyleSpan])
+}
+extension SyntaxDefinition {
+    static func tokenize(_ source: SyntaxSource) -> (spans: [SyntaxSpan], styles: [SyntaxStyleSpan]) { (highlight(source), []) }
 }
 
 /// A tolerant source highlighter, not a validator or renderer. Add formats to this registry.
@@ -71,8 +93,8 @@ enum SyntaxEngine {
         if let language { chosen = definitions.first { $0.language == language } }
         else { chosen = detect(text, using: definitions, cancelled: cancelled) }
         guard let chosen, !cancelled() else { return plain }
-        let spans = chosen.highlight(SyntaxSource(text, cancelled: cancelled))
-        return cancelled() ? plain : SyntaxResult(language: chosen.language, spans: spans)
+        let tokens = chosen.tokenize(SyntaxSource(text, cancelled: cancelled))
+        return cancelled() ? plain : SyntaxResult(language: chosen.language, spans: tokens.spans, styles: tokens.styles)
     }
 
     static func detectLanguage(_ text: String) -> NoteLanguage {

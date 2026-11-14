@@ -20,9 +20,12 @@ final class SyntaxHighlighter {
     /// A manually chosen format; nil follows automatic detection.
     var override: NoteLanguage? { didSet { if override != oldValue { refresh() } } }
     private(set) var isHighlighting = false
+    /// Fonts, spacing and code backgrounds for formats that describe typography.
+    let styler: EditorStyler
 
     init(editor: NSTextView) {
         self.editor = editor
+        styler = EditorStyler(editor: editor)
         observer = NotificationCenter.default.addObserver(forName: NSTextView.didChangeNotification,
             object: editor, queue: .main) { [weak self] _ in self?.refresh() }
         refresh()
@@ -57,6 +60,7 @@ final class SyntaxHighlighter {
                 self.isHighlighting = false
                 self.work = nil
                 self.cancellation = nil
+                self.styler.apply(result.styles)
                 self.paint(force: true)
             }
         }
@@ -115,6 +119,7 @@ final class SyntaxHighlighter {
         case .marker: rgb = (0.63, 0.81, 0.85)
         case .link: rgb = (0.52, 0.85, 0.92)
         case .tag: rgb = (0.95, 0.58, 0.62)
+        case .markup: rgb = (0.47, 0.51, 0.56)
         case .attribute: rgb = (0.93, 0.79, 0.55)
         case .column(let column):
             let colors: [(CGFloat, CGFloat, CGFloat)] = [

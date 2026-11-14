@@ -244,6 +244,7 @@ final class EditorPane {
         lineNumbers = LineNumberRuler(scrollView: scroll, textView: textView)
         syntax = SyntaxHighlighter(editor: textView)
         syntax.override = record.syntaxOverride
+        (textView as? EditorTextView)?.onDrawBackground = { [weak syntax] in syntax?.styler.drawBackgrounds(in: $0) }
         textView.isRichText = false
         textView.importsGraphics = false
         textView.allowsUndo = true

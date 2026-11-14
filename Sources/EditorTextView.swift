@@ -4,6 +4,8 @@ import CoreGraphics
 final class EditorTextView: NSTextView {
     var onCancelFind: (() -> Bool)?
     var onCancelOccurrences: (() -> Bool)?
+    /// Draws behind the text, such as code block backgrounds; the editor itself draws no background.
+    var onDrawBackground: ((NSRect) -> Void)?
     var zeroWidthFindLocations: [Int] = [] { didSet { needsDisplay = true } }
     private var multipleSelections: [NSValue]? { didSet { needsDisplay = true } }
     private var nativeMultipleSelection: [NSValue] = []
@@ -126,6 +128,7 @@ final class EditorTextView: NSTextView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        onDrawBackground?(dirtyRect)
         super.draw(dirtyRect)
         let carets = editingSelectedRanges
         let extra = multipleSelections != nil && window?.firstResponder === self && window?.isKeyWindow == true

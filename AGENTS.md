@@ -7,7 +7,7 @@ This is a native macOS scratchpad built with Swift and AppKit. Read README.md be
 - Closing a tab archives it, except unnamed whitespace-only scratch notes and files opened from disk without unsaved edits, whose local copies are discarded. Preserve named empty notes and scratch notes saved to a file. Archive trash buttons delete immediately, without confirmation; never delete the original external file. Keep notes as individual UTF-8 files in Application Support, with atomic writes and recoverable metadata.
 - Flush pending edits before switching, archiving, deactivation and quitting. Surface save failures and prevent closing/quitting when a flush fails.
 - Each open tab owns its native editor and undo manager. Do not replace the editor on every tab switch.
-- Keep language detection and syntax highlighting out of version 0.1 unless requested.
+- Syntax highlighting is content-detected and lives in `Sources/Syntax*.swift` behind a small registry; see `Docs/SyntaxHighlighting.md` before adding a format. Highlighting never changes the note's text: colors are temporary layout-manager attributes painted only near the visible text.
 - Build with `./build.sh`; run storage checks with `./test.sh`. Use the documented isolated data directory for native integration tests. Never run smoke tests against real notes.
 - AppKit scroll views in the full-size title bar must disable automatic content insets so tab buttons receive mouse input.
 - Tab labels and the single-note title support window dragging without sacrificing clicks or context menus. Native line numbers count logical lines, never wrapped rows; keep the cached line index incremental and draw only visible labels.
