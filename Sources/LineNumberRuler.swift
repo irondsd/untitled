@@ -5,6 +5,8 @@ final class LineNumberRuler: NSRulerView {
     private var observers: [NSObjectProtocol] = []
     private(set) var lines: LogicalLines
     var onThicknessChange: (() -> Void)?
+    /// The editor's body font. `NSTextView.font` reports the first character's font, which may be a heading.
+    var textFont: NSFont = Theme.font(14) { didSet { refreshMetrics() } }
     override var isFlipped: Bool { true }
 
     init(scrollView: NSScrollView, textView: NSTextView) {
@@ -40,7 +42,7 @@ final class LineNumberRuler: NSRulerView {
     deinit { for observer in observers { NotificationCenter.default.removeObserver(observer) } }
 
     func refreshMetrics() {
-        let font = labelFont(for: editor?.font ?? Theme.font(14))
+        let font = labelFont(for: textFont)
         let width = (String(lines.starts.count) as NSString).size(withAttributes: [.font: font]).width
         let thickness = max(44, ceil(width + 24))
         if ruleThickness != thickness { ruleThickness = thickness; onThicknessChange?() }
@@ -57,13 +59,16 @@ final class LineNumberRuler: NSRulerView {
     func baseline(for line: Int) -> CGFloat? {
         guard let editor, let manager = editor.layoutManager, lines.starts.indices.contains(line) else { return nil }
         let offset = lines.starts[line]
-        let font = editor.font ?? Theme.font(14)
+        var font = textFont
         let top: CGFloat
         if offset < lines.length {
             let glyph = manager.glyphIndexForCharacter(at: offset)
-            top = manager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY
+            // The used rect starts below any paragraph spacing, where the typesetter places the text.
+            top = manager.lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil).minY
+            // A Markdown heading sets its whole line in one larger font.
+            if let lineFont = editor.textStorage?.attribute(.font, at: offset, effectiveRange: nil) as? NSFont { font = lineFont }
         } else {
-            top = manager.extraLineFragmentRect.minY
+            top = manager.extraLineFragmentUsedRect.minY
         }
         // A newline/control glyph has different glyph metrics from a printable character.
         // The typesetter's font baseline is stable for both, including the final empty line.
@@ -75,7 +80,6 @@ final class LineNumberRuler: NSRulerView {
         NSColor.white.withAlphaComponent(0.04).setFill()
         NSRect(x: bounds.width - 1, y: rect.minY, width: 1, height: rect.height).fill()
         guard let editor, let manager = editor.layoutManager, let container = editor.textContainer else { return }
-        let textFont = editor.font ?? Theme.font(14)
         let font = labelFont(for: textFont)
         let origin = editor.textContainerOrigin
         let visible = editor.visibleRect.offsetBy(dx: -origin.x, dy: -origin.y)

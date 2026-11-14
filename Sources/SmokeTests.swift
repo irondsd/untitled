@@ -661,6 +661,105 @@ extension AppDelegate {
                 try await waitForSyntax(restoredSyntaxPane)
                 try check(restoredSyntaxPane.syntax.language == .markdown && restoredSyntaxPane.textView.string == markdownPaste,
                     "restored notes detect syntax from their plain-text content")
+                // Markdown typography uses real layout attributes, which must never reach the file, clipboard or undo.
+                newTab(nil)
+                let typeID = currentID!, typePane = editors[typeID]!, typeView = typePane.textView
+                let typeSource = "# Title\n\nBody with **bold** and `code`.\n\n```\nlet x = 1\n```\n## Next\n"
+                typeView.insertText(typeSource, replacementRange: NSRange(location: 0, length: 0))
+                try await waitForSyntax(typePane)
+                let bodySize = typePane.syntax.styler.baseFont.pointSize
+                @MainActor func storedFont(_ offset: Int) -> NSFont? {
+                    typeView.textStorage?.attribute(.font, at: offset, effectiveRange: nil) as? NSFont
+                }
+                @MainActor func offset(_ needle: String) -> Int { (typeView.string as NSString).range(of: needle).location }
+                @MainActor func spacing(_ offset: Int) -> (before: CGFloat, after: CGFloat) {
+                    let style = typeView.textStorage?.attribute(.paragraphStyle, at: offset, effectiveRange: nil) as? NSParagraphStyle
+                    return (style?.paragraphSpacingBefore ?? -1, style?.paragraphSpacing ?? -1)
+                }
+                @MainActor func isBold(_ offset: Int) -> Bool {
+                    storedFont(offset).map { NSFontManager.shared.traits(of: $0).contains(.boldFontMask) } ?? false
+                }
+                let headingSize = storedFont(offset("Title"))?.pointSize ?? 0
+                try check(typePane.syntax.language == .markdown && headingSize > bodySize && isBold(offset("Title"))
+                    && storedFont(offset("Body"))?.pointSize == bodySize && !isBold(offset("Body")), "Markdown headings are set larger and bold")
+                try check(spacing(0).after > 0 && spacing(offset("## Next")).before > 0 && spacing(offset("Body")) == (0, 0),
+                    "Markdown headings get paragraph spacing; body text does not")
+                try check(isBold(offset("bold")) && storedFont(offset("bold"))?.pointSize == bodySize, "Markdown strong text is bold at body size")
+                try check(typePane.syntax.styler.backgrounds.map(\.style) == [.inlineCode, .codeBlock]
+                    && spacing(offset("```")).before > 0, "Markdown code gets drawn backgrounds and block spacing")
+                @MainActor func labelMatchesText(_ line: Int, _ character: Int) -> Bool {
+                    guard let manager = typeView.layoutManager, let label = typePane.lineNumbers.baseline(for: line) else { return false }
+                    let glyph = manager.glyphIndexForCharacter(at: character)
+                    let text = typeView.textContainerOrigin.y + manager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY
+                        + manager.location(forGlyphAt: glyph).y
+                    return abs(label - text) < 0.5
+                }
+                try check(labelMatchesText(0, offset("Title")) && labelMatchesText(2, offset("Body")) && labelMatchesText(4, offset("```"))
+                    && labelMatchesText(7, offset("Next")), "line numbers follow heading baselines and paragraph spacing")
+                try flush()
+                try check(try store.text(typeID) == typeSource, "styled Markdown persists as exact source")
+                do {
+                    let savedItems = clipboard.pasteboardItems?.map { item -> NSPasteboardItem in
+                        let copy = NSPasteboardItem()
+                        for type in item.types { if let data = item.data(forType: type) { copy.setData(data, forType: type) } }
+                        return copy
+                    } ?? []
+                    defer { clipboard.clearContents(); if !savedItems.isEmpty { clipboard.writeObjects(savedItems) } }
+                    typeView.selectAll(nil)
+                    typeView.copy(nil)
+                    try check(clipboard.string(forType: .string) == typeSource && clipboard.data(forType: .rtf) == nil,
+                        "copying styled Markdown yields plain text only")
+                }
+                typeView.undoManager?.removeAllActions()
+                // Return at the end of a heading starts a body-sized line at once, before analysis runs.
+                typeView.setSelectedRange(NSRange(location: offset("Title") + 5, length: 0))
+                typeView.insertText("\n", replacementRange: typeView.selectedRange())
+                typeView.insertText("x", replacementRange: typeView.selectedRange())
+                let typedLine = offset("Title") + 6
+                try check(storedFont(typedLine)?.pointSize == bodySize && spacing(typedLine).before == 0 && spacing(typedLine).after == 0
+                    && storedFont(offset("Title"))?.pointSize == headingSize, "a new line after a heading is body text immediately")
+                // Typing inside a heading keeps its size; typing after bold text is not bold.
+                typeView.setSelectedRange(NSRange(location: offset("Title") + 2, length: 0))
+                typeView.insertText("Q", replacementRange: typeView.selectedRange())
+                typeView.setSelectedRange(NSRange(location: offset("**bold**") + 8, length: 0))
+                typeView.insertText("z", replacementRange: typeView.selectedRange())
+                try check(storedFont(offset("TiQtle") + 2)?.pointSize == headingSize && !isBold(offset("**bold**") + 8),
+                    "typed text continues the heading it is in and not the bold run it follows")
+                try await waitForSyntax(typePane)
+                try check(storedFont(typedLine)?.pointSize == bodySize && storedFont(offset("TiQtle"))?.pointSize == headingSize,
+                    "analysis agrees with edit-time styling")
+                // Removing the heading marker drops its size and spacing at once; undo brings them back.
+                let markerEnd = offset("TiQtle")
+                typeView.breakUndoCoalescing()
+                typeView.setSelectedRange(NSRange(location: 0, length: markerEnd))
+                typeView.insertText("", replacementRange: typeView.selectedRange())
+                try check(storedFont(0)?.pointSize == bodySize && spacing(0) == (0, 0), "deleting # resets the heading immediately")
+                try await waitForSyntax(typePane)
+                typeView.undoManager?.undo()
+                try await waitForSyntax(typePane)
+                // Test edits can share one undo group, so check the heading rather than exact text.
+                try check(typeView.string.hasPrefix("# Ti") && storedFont(2)?.pointSize == headingSize && spacing(0).after > 0,
+                    "undo restores a heading's typography")
+                // Zoom rebuilds every role from the new base font.
+                typePane.applyFont(size: bodySize + 4)
+                try check(storedFont(offset("Body"))?.pointSize == bodySize + 4 && (storedFont(2)?.pointSize ?? 0) > bodySize + 4
+                    && isBold(offset("bold")) && typePane.lineNumbers.textFont.pointSize == bodySize + 4 && labelMatchesText(0, 2),
+                    "font changes rescale headings and keep line numbers aligned")
+                typePane.applyFont(size: bodySize)
+                // Choosing another format removes all typography.
+                typePane.syntax.override = .plain
+                try await waitForSyntax(typePane)
+                var hasRoles = false
+                typeView.textStorage?.enumerateAttributes(in: NSRange(location: 0, length: typeView.textStorage!.length)) { attributes, _, _ in
+                    if attributes[EditorStyler.fontRole] != nil || attributes[EditorStyler.paragraphRole] != nil { hasRoles = true }
+                }
+                try check(!hasRoles && storedFont(2)?.pointSize == bodySize && spacing(0) == (0, 0)
+                    && typePane.syntax.styler.backgrounds.isEmpty, "plain text override removes Markdown typography")
+                typePane.syntax.override = nil
+                try await waitForSyntax(typePane)
+                try check(storedFont(2)?.pointSize == headingSize, "automatic detection restores Markdown typography")
+                try flush()
+                try close(typeID)
                 newTab(nil)
                 let scriptID = currentID!, scriptPane = editors[currentID!]!, scriptView = editors[currentID!]!.textView
                 let typeScriptPaste = "interface User { name: string; }\nconst greet = (user: User): string => `Hello ${user.name}`;\n"

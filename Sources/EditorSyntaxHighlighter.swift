@@ -67,6 +67,21 @@ final class SyntaxHighlighter {
         work = task
         Self.queue.asyncAfter(deadline: .now() + 0.12, execute: task)
     }
+    /// Analyzes on the main thread, for a newly opened small note that should appear fully styled.
+    func analyzeNow() {
+        work?.cancel()
+        cancellation?.cancel()
+        work = nil
+        cancellation = nil
+        revision += 1
+        guard let editor else { return }
+        let result = SyntaxEngine.analyze(editor.string, language: override)
+        language = result.language
+        index = SyntaxSpanIndex(result.spans)
+        isHighlighting = false
+        styler.apply(result.styles)
+        paint(force: true)
+    }
     /// Repaints as the visible text changes; call once the editor sits in its scroll view.
     func track(_ clip: NSClipView) {
         if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }

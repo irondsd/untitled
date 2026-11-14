@@ -274,8 +274,9 @@ final class EditorPane {
         textView.isIncrementalSearchingEnabled = false
         textView.setAccessibilityLabel("Note text")
         textView.string = text
-        syntax.refresh()
         applyFont(size: fontSize)
+        // Small notes are styled before the saved scroll offset is restored, since heading sizes move lines.
+        if (text as NSString).length <= 100_000 { syntax.analyzeNow() } else { syntax.refresh() }
         let location = min(record.selectionLocation, (text as NSString).length)
         let length = min(record.selectionLength, (text as NSString).length - location)
         textView.setSelectedRange(NSRange(location: max(0, location), length: max(0, length)))
@@ -315,7 +316,8 @@ final class EditorPane {
         if let storage = textView.textStorage, storage.length > 0 {
             storage.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: storage.length))
         }
-        lineNumbers.refreshMetrics()
+        syntax.styler.setBase(font: font, paragraph: paragraph)
+        lineNumbers.textFont = font
         if scroll.documentView != nil { layoutEditor() }
     }
     func applyAppearance(brightness: Double, showsLineNumbers: Bool) {

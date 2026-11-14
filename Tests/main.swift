@@ -290,6 +290,29 @@ do {
     try check(!kinds(escapedSyntax, escapedMarkdown, at: "*plain*").contains(.emphasis)
         && !kinds(escapedSyntax, escapedMarkdown, at: "_case").contains(.emphasis)
         && kinds(escapedSyntax, escapedMarkdown, at: "**code**") == [.code], "escaped emphasis, identifiers and inline code keep literal text")
+    func styles(_ source: String, at needle: String) -> [SyntaxStyle] {
+        let result = SyntaxEngine.analyze(source), range = (source as NSString).range(of: needle)
+        return result.styles.filter { NSLocationInRange(range.location, $0.range) }.map(\.style)
+    }
+    func styleRanges(_ source: String, _ style: SyntaxStyle) -> [String] {
+        SyntaxEngine.analyze(source).styles.filter { $0.style == style }.map { (source as NSString).substring(with: $0.range) }
+    }
+    let typographyFixture = "# Plan 📝\r\n\r\nShip **today** and *soon* with `code`.\r\n```yaml\r\n# literal\r\n```\r\n### Three\r\nTitle\r\n===\r\n"
+    try check(styleRanges(typographyFixture, .heading(1)) == ["# Plan 📝"] && styleRanges(typographyFixture, .heading(3)) == ["### Three"],
+        "Markdown heading styles cover the line, with their level, across CRLF and Unicode")
+    try check(styleRanges(typographyFixture, .strong) == ["**today**"] && styleRanges(typographyFixture, .emphasis) == ["*soon*"]
+        && styleRanges(typographyFixture, .inlineCode) == ["`code`"], "Markdown strong, emphasis and inline code have styles")
+    try check(styleRanges(typographyFixture, .codeBlock) == ["```yaml\r\n# literal\r\n```"] && styles(typographyFixture, at: "# literal") == [.codeBlock],
+        "a fenced block is one code style from fence to fence, with no heading inside")
+    try check(styleRanges(typographyFixture, .setextHeading(1)) == ["Title"] && styleRanges(typographyFixture, .setextUnderline) == ["==="],
+        "setext titles and underlines have styles")
+    try check(styleRanges("```js\nlet a = 1\n", .codeBlock) == ["```js\nlet a = 1"], "an unclosed fence styles code to the end of the note")
+    try check(styleRanges("# One\n===", .setextHeading(1)).isEmpty && styleRanges("- item\n\n===", .setextHeading(1)).isEmpty,
+        "only a paragraph line directly above an underline becomes a setext title")
+    try check(kinds(markdownSyntax, markdownFixture, at: "**today**").contains(.markup)
+        && !kinds(markdownSyntax, markdownFixture, at: "today**").contains(.markup)
+        && kinds(markdownSyntax, markdownFixture, at: "# Plan").contains(.markup), "Markdown delimiters are dimmed as markup, their text is not")
+    try check(SyntaxEngine.analyze("service: api\nport: 80\n").styles.isEmpty, "formats without typography return no styles")
     try check(SyntaxEngine.analyze(String(repeating: yamlFixture, count: 1000), cancelled: { true }).spans.isEmpty,
         "obsolete syntax jobs can be cancelled")
     let typescript = #"""
