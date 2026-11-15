@@ -867,6 +867,26 @@ extension AppDelegate {
                 try flush()
                 try check(try store.text(tableID) == wideSource.replacingOccurrences(of: "\(wideCell)|", with: "\(wideCell)x|"),
                     "a scrolled table persists as exact source")
+                // View ▸ Styled Markdown turns all of it off for editing the raw syntax, and back on.
+                @MainActor func hasLayoutAttributes() -> Bool {
+                    var found = false
+                    let storage = tableView.textStorage!
+                    storage.enumerateAttributes(in: NSRange(location: 0, length: storage.length)) { attributes, _, stop in
+                        if attributes[.kern] != nil || attributes[EditorStyler.fontRole] != nil || attributes[EditorStyler.paragraphRole] != nil {
+                            found = true; stop.pointee = true
+                        }
+                    }
+                    return found
+                }
+                tablePane.setStylesMarkdown(false)
+                try check(!hasLayoutAttributes() && styler.tables.isEmpty && fragments(tableOffset("| a |")) > 1
+                    && tablePane.syntax.language == .markdown, "turning Styled Markdown off leaves colored plain text")
+                tablePane.setStylesMarkdown(true)
+                try check(hasLayoutAttributes() && styler.tables.count == 1 && fragments(tableOffset("| a |")) == 1 && columnsAligned(),
+                    "turning Styled Markdown on restores headings and tables")
+                try flush()
+                try check(try store.text(tableID) == wideSource.replacingOccurrences(of: "\(wideCell)|", with: "\(wideCell)x|"),
+                    "toggling Styled Markdown never changes the note")
                 try flush()
                 try close(tableID)
                 newTab(nil)

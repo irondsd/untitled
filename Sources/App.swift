@@ -212,7 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         if let currentID { editors[currentID]?.scroll.removeFromSuperview() }
         if editors[id] == nil {
             let pane = EditorPane(text: try store.text(id), fontSize: fontSize,
-                fontFamily: preferences.fontFamily, record: record)
+                fontFamily: preferences.fontFamily, stylesMarkdown: preferences.stylesMarkdown, record: record)
             pane.applyAppearance(brightness: preferences.brightness, showsLineNumbers: preferences.showsLineNumbers)
             pane.textView.delegate = self
             editors[id] = pane
@@ -499,6 +499,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         preferencesDefaults.set(Double(fontSize), forKey: "fontSize")
         editors.values.forEach { $0.applyFont(size: fontSize, family: preferences.fontFamily) }
     }
+    @objc private func toggleStyledMarkdown(_ sender: Any?) {
+        var updated = preferences
+        updated.stylesMarkdown.toggle()
+        applyPreferences(updated)
+    }
     @objc private func changeOpacity(_ sender: NSMenuItem) {
         var updated = preferences
         updated.opacity = Double(sender.tag) / 100
@@ -515,6 +520,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         if defaultChanged || familyChanged { changeFont(by: 0) }
         for pane in editors.values {
             pane.applyAppearance(brightness: preferences.brightness, showsLineNumbers: preferences.showsLineNumbers)
+            pane.setStylesMarkdown(preferences.stylesMarkdown)
         }
         settingsController?.refresh(preferences)
     }
@@ -632,6 +638,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         item(view, "Decrease Text Size", #selector(decreaseFont), "-", target: self)
         item(view, "Reset Text Size", #selector(resetFont), "0", target: self)
         view.addItem(.separator())
+        item(view, "Styled Markdown", #selector(toggleStyledMarkdown), "m", [.command, .shift], target: self)
+        view.addItem(.separator())
         let opacityMenu = NSMenu(title: "Background")
         let opacityParent = view.addItem(withTitle: "Background", action: nil, keyEquivalent: "")
         opacityParent.submenu = opacityMenu
@@ -687,6 +695,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             }
             return NSApp.keyWindow == nil || NSApp.keyWindow === window
         }
+        if menuItem.action == #selector(toggleStyledMarkdown) { menuItem.state = preferences.stylesMarkdown ? .on : .off }
         if menuItem.action == #selector(changeOpacity) { menuItem.state = Int((preferences.opacity * 100).rounded()) == menuItem.tag ? .on : .off }
         return true
     }

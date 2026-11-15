@@ -43,6 +43,8 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
     /// Whether any role attribute may be present; plain notes skip edit-time fixes entirely.
     private var hasRoles = false
     var isApplying = false
+    /// The View menu's Styled Markdown; the next analysis applies a change.
+    var isEnabled = true
     private var selectionObserver: NSObjectProtocol?
     /// The table a sideways scroll gesture is moving, by location, until the gesture and its momentum end.
     var scrollingTable: Int?
@@ -134,6 +136,8 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
     // MARK: Applying analysis results
 
     func apply(_ styles: [SyntaxStyleSpan]) {
+        // Styled Markdown off keeps colors only: no fonts, spacing, backgrounds or table layout.
+        let styles = isEnabled ? styles : []
         let drawn = styles.filter { $0.style == .codeBlock || $0.style == .inlineCode }
             .sorted { $0.range.location < $1.range.location }
         if drawn.map(\.range) != backgrounds.map(\.range) || drawn.map(\.style) != backgrounds.map(\.style) {

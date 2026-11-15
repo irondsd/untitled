@@ -227,7 +227,7 @@ final class EditorPane {
     private var brightness: Double = 0.93
     private(set) var fontFamily: String
 
-    init(text: String, fontSize: CGFloat, fontFamily: String = "", record: NoteRecord) {
+    init(text: String, fontSize: CGFloat, fontFamily: String = "", stylesMarkdown: Bool = true, record: NoteRecord) {
         self.fontFamily = fontFamily
         scroll = NSScrollView(frame: .zero)
         scroll.drawsBackground = false
@@ -245,6 +245,7 @@ final class EditorPane {
         lineNumbers = LineNumberRuler(scrollView: scroll, textView: textView)
         syntax = SyntaxHighlighter(editor: textView)
         syntax.override = record.syntaxOverride
+        syntax.styler.isEnabled = stylesMarkdown
         (textView as? EditorTextView)?.onDrawBackground = { [weak syntax] in syntax?.styler.drawBackgrounds(in: $0) }
         (textView as? EditorTextView)?.onScrollWheel = { [weak syntax] in syntax?.styler.scrollTable(with: $0) ?? false }
         (textView as? EditorTextView)?.drawingExclusions = { [weak syntax] in syntax?.styler.tableMargins(in: $0) ?? [] }
@@ -324,6 +325,25 @@ final class EditorPane {
         syntax.styler.setBase(font: font, paragraph: paragraph)
         lineNumbers.textFont = font
         if scroll.documentView != nil { layoutEditor() }
+    }
+    /// Turns Markdown typography on or off, keeping the line at the top of the editor in place.
+    func setStylesMarkdown(_ enabled: Bool) {
+        guard syntax.styler.isEnabled != enabled else { return }
+        let manager = textView.layoutManager!, container = textView.textContainer!
+        let origin = textView.textContainerOrigin, visible = textView.visibleRect
+        let length = (textView.string as NSString).length
+        func top(of character: Int) -> CGFloat {
+            origin.y + manager.lineFragmentRect(forGlyphAt: manager.glyphIndexForCharacter(at: character), effectiveRange: nil).minY
+        }
+        let anchor = length == 0 ? nil
+            : manager.characterIndex(for: NSPoint(x: 0, y: visible.minY - origin.y), in: container, fractionOfDistanceBetweenInsertionPoints: nil)
+        let before = anchor.map { top(of: $0) - visible.minY }
+        syntax.styler.isEnabled = enabled
+        if length <= 100_000 { syntax.analyzeNow() } else { syntax.refresh() }
+        guard let anchor, let before, anchor < length else { return }
+        let y = max(0, top(of: anchor) - before)
+        scroll.contentView.scroll(to: NSPoint(x: scroll.contentView.bounds.minX, y: y))
+        scroll.reflectScrolledClipView(scroll.contentView)
     }
     func applyAppearance(brightness: Double, showsLineNumbers: Bool) {
         if self.brightness != brightness {

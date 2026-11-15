@@ -8,6 +8,9 @@ struct EditorPreferences: Equatable {
     /// Font family name; empty uses the default monospaced font.
     var fontFamily = ""
     var showsLineNumbers = true
+    /// Markdown headings, emphasis, code and tables get sizes, spacing, backgrounds and grids.
+    /// Off leaves colors only, for editing the raw syntax.
+    var stylesMarkdown = true
 
     var backgroundColor: NSColor {
         NSColor(calibratedWhite: CGFloat(1 - backgroundBlackLevel), alpha: CGFloat(opacity))
@@ -32,6 +35,9 @@ struct EditorPreferences: Equatable {
         if defaults.object(forKey: "showsLineNumbers") != nil {
             showsLineNumbers = defaults.bool(forKey: "showsLineNumbers")
         }
+        if defaults.object(forKey: "stylesMarkdown") != nil {
+            stylesMarkdown = defaults.bool(forKey: "stylesMarkdown")
+        }
     }
     func save(to defaults: UserDefaults) {
         defaults.set(opacity, forKey: "opacity")
@@ -40,6 +46,7 @@ struct EditorPreferences: Equatable {
         defaults.set(defaultFontSize, forKey: "defaultFontSize")
         defaults.set(fontFamily, forKey: "fontFamily")
         defaults.set(showsLineNumbers, forKey: "showsLineNumbers")
+        defaults.set(stylesMarkdown, forKey: "stylesMarkdown")
     }
 }
 
@@ -55,12 +62,13 @@ final class SettingsController: NSWindowController, NSTextFieldDelegate {
     private let fontSizeField = NSTextField()
     private let fontSizeStepper = NSStepper()
     private let lineNumbersButton = NSButton(checkboxWithTitle: "Show line numbers", target: nil, action: nil)
+    private let markdownButton = NSButton(checkboxWithTitle: "Style Markdown headings, code and tables", target: nil, action: nil)
     private var preferences: EditorPreferences
     var onChange: ((EditorPreferences) -> Void)?
 
     init(preferences: EditorPreferences) {
         self.preferences = preferences
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 345),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 385),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Settings"
         window.isReleasedWhenClosed = false
@@ -136,6 +144,10 @@ final class SettingsController: NSWindowController, NSTextFieldDelegate {
         lineNumbersButton.target = self
         lineNumbersButton.action = #selector(lineNumbersChanged)
         row("", controls: [lineNumbersButton])
+        markdownButton.target = self
+        markdownButton.action = #selector(markdownChanged)
+        markdownButton.toolTip = "Also in View ▸ Styled Markdown (⇧⌘M)"
+        row("", controls: [markdownButton])
         let hint = NSTextField(labelWithString: "Changes apply immediately. ⌘0 resets to the default size.")
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .secondaryLabelColor
@@ -157,6 +169,7 @@ final class SettingsController: NSWindowController, NSTextFieldDelegate {
         fontSizeField.doubleValue = preferences.defaultFontSize
         fontSizeStepper.doubleValue = preferences.defaultFontSize
         lineNumbersButton.state = preferences.showsLineNumbers ? .on : .off
+        markdownButton.state = preferences.stylesMarkdown ? .on : .off
     }
     @objc private func sliderChanged(_ sender: NSSlider) {
         if sender === opacitySlider { preferences.opacity = sender.doubleValue.rounded() / 100 }
@@ -207,6 +220,10 @@ final class SettingsController: NSWindowController, NSTextFieldDelegate {
     }
     @objc private func lineNumbersChanged(_ sender: NSButton) {
         preferences.showsLineNumbers = sender.state == .on
+        changed()
+    }
+    @objc private func markdownChanged(_ sender: NSButton) {
+        preferences.stylesMarkdown = sender.state == .on
         changed()
     }
     private func changed() { refresh(preferences); onChange?(preferences) }
