@@ -87,7 +87,11 @@ final class SyntaxHighlighter {
         if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
         clip.postsBoundsChangedNotifications = true
         scrollObserver = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification,
-            object: clip, queue: .main) { [weak self] _ in self?.paint() }
+            object: clip, queue: .main) { [weak self] _ in
+                // Rows of a sideways-scrolled table are laid out again as they come into view.
+                if self?.styler.tables.isEmpty == false { self?.styler.relayoutVisibleRows() }
+                self?.paint()
+            }
     }
     func applyAppearance(brightness: Double) {
         self.brightness = brightness

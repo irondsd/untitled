@@ -43,12 +43,22 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
     /// Whether any role attribute may be present; plain notes skip edit-time fixes entirely.
     private var hasRoles = false
     var isApplying = false
+    private var selectionObserver: NSObjectProtocol?
+    /// The table a sideways scroll gesture is moving, by location, until the gesture and its momentum end.
+    var scrollingTable: Int?
+    var scrollGestureDecided = false
+    /// A table realignment too large to write while the storage processes an edit.
+    var deferredLayout = false
 
     init(editor: NSTextView) {
         self.editor = editor
         super.init()
         editor.textStorage?.delegate = self
+        (editor.textContainer as? EditorTextContainer)?.tableOffset = { [weak self] in self?.tableOffset(at: $0) }
+        selectionObserver = NotificationCenter.default.addObserver(forName: NSTextView.didChangeSelectionNotification,
+            object: editor, queue: .main) { [weak self] _ in self?.revealSelectionInTable() }
     }
+    deinit { if let selectionObserver { NotificationCenter.default.removeObserver(selectionObserver) } }
 
     // MARK: Base appearance
 
@@ -58,6 +68,7 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
         fonts = [:]
         paragraphs = [:]
         cellMetrics = [:]
+        for index in tables.indices { tables[index].metrics = tables[index].metrics.map { _ in nil } }
         // Setting the editor font replaced every font, so rebuild all roles, not just the changed ones.
         applyTypography(force: true)
         layoutTables()
@@ -132,7 +143,9 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
         let typographic = styles.filter { $0.style != .inlineCode && $0.style != .table }
         let parsed = parseTables(styles.filter { $0.style == .table })
         // Fonts and spacing cost layout work per span or table row; a huge note keeps colors and drawn backgrounds only.
-        let cost = typographic.count + parsed.reduce(0) { $0 + $1.table.rows.count }
+        // A table row costs about ten spans: it is measured, kerned and laid out wide, and widening a
+        // column re-lays every row. That keeps tables to about 2,000 rows.
+        let cost = typographic.count + parsed.reduce(0) { $0 + $1.table.rows.count * 10 }
         let within = cost <= Self.maximumTypographySpans
         typography = within ? typographic : []
         replaceTables(with: within ? parsed : [])

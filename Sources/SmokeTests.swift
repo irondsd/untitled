@@ -819,6 +819,54 @@ extension AppDelegate {
                 }
                 try check(tablePane.syntax.styler.tables.isEmpty && !kerned && !tableBold(tableOffset("Name")),
                     "a line that is no longer a table loses its alignment")
+                // A table wider than the editor keeps its rows on one line and scrolls sideways on its own.
+                tableView.selectAll(nil)
+                let wideCell = String(repeating: "wide ", count: 80)
+                let wideSource = "Before the table\n\n| Key | Value |\n|---|---|\n| a | \(wideCell)|\n| b | short |\n\nAfter the table\n"
+                tableView.insertText(wideSource, replacementRange: tableView.selectedRange())
+                try await waitForSyntax(tablePane)
+                @MainActor func glyphX(_ offset: Int) -> CGFloat {
+                    guard let manager = tableView.layoutManager else { return .nan }
+                    let glyph = manager.glyphIndexForCharacter(at: offset)
+                    return manager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minX + manager.location(forGlyphAt: glyph).x
+                }
+                @MainActor func fragments(_ offset: Int) -> Int {
+                    guard let manager = tableView.layoutManager else { return 0 }
+                    let line = (tableView.string as NSString).lineRange(for: NSRange(location: offset, length: 0))
+                    var count = 0
+                    manager.enumerateLineFragments(forGlyphRange: manager.glyphRange(forCharacterRange: line, actualCharacterRange: nil)) { _, _, _, _, _ in count += 1 }
+                    return count
+                }
+                let styler = tablePane.syntax.styler
+                let bodyX = glyphX(tableOffset("After")), cellX = glyphX(tableOffset("| a |") + 2)
+                try check(styler.tables.count == 1 && fragments(tableOffset("| a |")) == 1 && fragments(tableOffset("Before")) == 1,
+                    "a wide table row stays on one line")
+                let wideManager = tableView.layoutManager!
+                let rowY = tableView.textContainerOrigin.y
+                    + wideManager.lineFragmentRect(forGlyphAt: wideManager.glyphIndexForCharacter(at: tableOffset("| a |")), effectiveRange: nil).midY
+                styler.scrollGestureDecided = false
+                try check(!styler.scrollTable(at: NSPoint(x: 100, y: rowY), deltaX: 2, deltaY: -30) && styler.tables[0].offset == 0,
+                    "a vertical scroll over a table scrolls the note, not the table")
+                styler.scrollGestureDecided = false
+                let scrolled = styler.scrollTable(at: NSPoint(x: 100, y: rowY), deltaX: -120, deltaY: 0)
+                try check(scrolled && styler.tables[0].offset == 120 && abs(glyphX(tableOffset("| a |") + 2) - (cellX - 120)) < 0.5
+                    && abs(glyphX(tableOffset("After")) - bodyX) < 0.5 && tableView.textContainerOrigin.x == tableView.textContainerInset.width,
+                    "a sideways swipe scrolls only the table under it")
+                styler.scrollGestureDecided = false
+                _ = styler.scrollTable(at: NSPoint(x: 100, y: rowY), deltaX: 100_000, deltaY: 0)
+                try check(styler.tables[0].offset == 0, "a table cannot scroll past its start")
+                // The insertion point pulls the table along, so typing at the end of a wide row stays visible.
+                tableView.setSelectedRange(NSRange(location: tableOffset(wideCell) + (wideCell as NSString).length, length: 0))
+                let caretX = glyphX(tableView.selectedRange().location)
+                try check(styler.tables[0].offset > 0 && caretX > 0 && caretX < (tableView.textContainer?.size.width ?? 0),
+                    "moving into a wide cell scrolls the table to the insertion point")
+                tableView.insertText("x", replacementRange: tableView.selectedRange())
+                try check(columnsAligned(), "typing in a scrolled table keeps it aligned")
+                try await waitForSyntax(tablePane)
+                try check(styler.tables.first?.offset ?? 0 > 0, "analysis keeps a table's scroll position")
+                try flush()
+                try check(try store.text(tableID) == wideSource.replacingOccurrences(of: "\(wideCell)|", with: "\(wideCell)x|"),
+                    "a scrolled table persists as exact source")
                 try flush()
                 try close(tableID)
                 newTab(nil)

@@ -1,7 +1,29 @@
 import AppKit
 import CoreGraphics
 
+/// Lays out Markdown table rows without wrapping, shifted by their table's horizontal scroll.
+final class EditorTextContainer: NSTextContainer {
+    /// The horizontal scroll of the table containing a character, or nil outside tables.
+    var tableOffset: ((Int) -> CGFloat?)?
+    static let tableLineWidth: CGFloat = 1_000_000
+
+    override func lineFragmentRect(forProposedRect proposedRect: NSRect, at characterIndex: Int,
+                                   writingDirection baseWritingDirection: NSWritingDirection,
+                                   remaining remainingRect: UnsafeMutablePointer<NSRect>?) -> NSRect {
+        if let offset = tableOffset?(characterIndex) {
+            remainingRect?.pointee = .zero
+            return NSRect(x: proposedRect.minX - offset, y: proposedRect.minY, width: Self.tableLineWidth, height: proposedRect.height)
+        }
+        return super.lineFragmentRect(forProposedRect: proposedRect, at: characterIndex,
+                                      writingDirection: baseWritingDirection, remaining: remainingRect)
+    }
+}
+
 final class EditorTextView: NSTextView {
+    /// Handles a scroll event itself, such as a sideways swipe over a wide table.
+    var onScrollWheel: ((NSEvent) -> Bool)?
+    /// Areas where nothing may draw, such as the margins beside a scrolled table.
+    var drawingExclusions: ((NSRect) -> [NSRect])?
     var onCancelFind: (() -> Bool)?
     var onCancelOccurrences: (() -> Bool)?
     /// Draws behind the text, such as code block backgrounds; the editor itself draws no background.
@@ -127,9 +149,27 @@ final class EditorTextView: NSTextView {
         breakUndoCoalescing()
     }
 
+    /// A scrolled table lays its rows out left of the container. AppKit would move the whole
+    /// text to keep them in view, so pin the origin to the inset.
+    override var textContainerOrigin: NSPoint { NSPoint(x: textContainerInset.width, y: textContainerInset.height) }
+
+    override func scrollWheel(with event: NSEvent) {
+        if onScrollWheel?(event) == true { return }
+        super.scrollWheel(with: event)
+    }
+
     override func draw(_ dirtyRect: NSRect) {
+        let exclusions = drawingExclusions?(dirtyRect) ?? []
+        if !exclusions.isEmpty {
+            NSGraphicsContext.saveGraphicsState()
+            let clip = NSBezierPath(rect: bounds)
+            for rect in exclusions { clip.appendRect(rect) }
+            clip.windingRule = .evenOdd
+            clip.addClip()
+        }
         onDrawBackground?(dirtyRect)
         super.draw(dirtyRect)
+        if !exclusions.isEmpty { NSGraphicsContext.restoreGraphicsState() }
         let carets = editingSelectedRanges
         let extra = multipleSelections != nil && window?.firstResponder === self && window?.isKeyWindow == true
             ? carets.dropFirst().filter { $0.rangeValue.length == 0 }.map { $0.rangeValue.location } : []

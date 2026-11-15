@@ -241,10 +241,13 @@ final class EditorPane {
         scroll.scrollerStyle = .overlay
         // A separate text system per open tab preserves its own selection and undo history.
         textView = EditorTextView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        textView.replaceTextContainer(EditorTextContainer(size: NSSize(width: 800, height: CGFloat.greatestFiniteMagnitude)))
         lineNumbers = LineNumberRuler(scrollView: scroll, textView: textView)
         syntax = SyntaxHighlighter(editor: textView)
         syntax.override = record.syntaxOverride
         (textView as? EditorTextView)?.onDrawBackground = { [weak syntax] in syntax?.styler.drawBackgrounds(in: $0) }
+        (textView as? EditorTextView)?.onScrollWheel = { [weak syntax] in syntax?.styler.scrollTable(with: $0) ?? false }
+        (textView as? EditorTextView)?.drawingExclusions = { [weak syntax] in syntax?.styler.tableMargins(in: $0) ?? [] }
         textView.isRichText = false
         textView.importsGraphics = false
         textView.allowsUndo = true
@@ -299,6 +302,8 @@ final class EditorPane {
         textView.setFrameOrigin(.zero)
         scroll.contentView.scroll(to: NSPoint(x: -insets.left, y: scroll.contentView.bounds.minY))
         scroll.reflectScrolledClipView(scroll.contentView)
+        // A wider editor may show all of a scrolled table.
+        syntax.styler.clampTableOffsets()
         // Showing a tab, resizing or rewrapping can expose text that was never painted.
         syntax.paint()
     }

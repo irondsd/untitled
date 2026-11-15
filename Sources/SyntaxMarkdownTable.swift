@@ -36,10 +36,12 @@ enum MarkdownTables {
 
     /// The pipes and cells of one line, or nil when it has no unescaped pipe.
     static func row(_ text: NSString, line: NSRange) -> MarkdownTableRow? {
-        var pipes: [Int] = [], escaped = false, firstContent: Int?
+        var pipes: [Int] = [], escaped = false, firstContent: Int?, delimiterCharacters = true
         for index in line.location..<NSMaxRange(line) {
             let character = text.character(at: index)
             if firstContent == nil && character != 0x20 && character != 0x09 { firstContent = index }
+            // Only `|`, `-`, `:` and blanks can form a delimiter row.
+            if delimiterCharacters && ![0x7C, 0x2D, 0x3A, 0x20, 0x09].contains(character) { delimiterCharacters = false }
             if escaped { escaped = false; continue }
             if character == 0x5C { escaped = true }
             else if character == 0x7C { pipes.append(index) }
@@ -57,7 +59,7 @@ enum MarkdownTables {
                 if !isBlank(text, rest) { cells.append(MarkdownTableCell(range: rest, open: pipe, close: nil)) }
             }
         }
-        let delimiter = !cells.isEmpty && cells.allSatisfy {
+        let delimiter = delimiterCharacters && !cells.isEmpty && cells.allSatisfy {
             matches(delimiterCell, text.substring(with: $0.range))
         }
         return MarkdownTableRow(line: line, pipes: pipes, cells: cells, isDelimiter: delimiter)
@@ -80,8 +82,7 @@ enum MarkdownTables {
             }
         }
         var rows = [headerRow, delimiter], line = nextLine(text, after: next)
-        while let current = line, current.location < end, !isBlank(text, current),
-              !matches(interrupt, text.substring(with: current)),
+        while let current = line, current.location < end, !isBlank(text, current), !interrupts(text, current),
               let body = row(text, line: current) {
             rows.append(body)
             line = nextLine(text, after: current)
@@ -102,6 +103,14 @@ enum MarkdownTables {
         text.getLineStart(nil, end: &end, contentsEnd: nil, for: NSRange(location: line.location, length: 0))
         guard end < text.length else { return nil }
         return lineRange(text, at: end)
+    }
+
+    /// A heading, quote or fence ends a table. Most rows start with a pipe and skip the expression.
+    private static func interrupts(_ text: NSString, _ line: NSRange) -> Bool {
+        var index = line.location
+        while index < NSMaxRange(line), text.character(at: index) == 0x20 { index += 1 }
+        guard index < NSMaxRange(line), [0x23, 0x3E, 0x60, 0x7E].contains(text.character(at: index)) else { return false }
+        return matches(interrupt, text.substring(with: line))
     }
 
     /// Matching a small substring: bridging a mutable note to String would copy all of it.
