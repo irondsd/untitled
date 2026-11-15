@@ -536,7 +536,8 @@ extension EditorStyler {
         let frame = NSRect(x: left, y: top, width: right - left, height: bottom - top)
         let outline = NSBezierPath(roundedRect: frame.insetBy(dx: 0.5, dy: 0.5), xRadius: 5, yRadius: 5)
         // A scrolled table is cut at the text area's edges, like its rows.
-        let viewport = NSRect(x: origin.x, y: top - 1, width: container.size.width, height: bottom - top + 2)
+        // Tall enough for the scroll bar, which sits just below the table.
+        let viewport = NSRect(x: origin.x, y: top - 1, width: container.size.width, height: bottom - top + 8)
         NSGraphicsContext.saveGraphicsState()
         viewport.clip()
         NSGraphicsContext.saveGraphicsState()
@@ -560,14 +561,14 @@ extension EditorStyler {
         line.setStroke()
         outline.lineWidth = 1
         outline.stroke()
-        // A thin bar shows that a table is wider than the editor, and how far it is scrolled.
+        // A thin bar below the table shows that it is wider than the editor, and how far it is scrolled.
         let total = right - origin.x + table.offset, overflow = total + 1 - container.size.width
         if overflow > 0 {
             let track = container.size.width - 8
             let knob = max(24, track * container.size.width / (total + 1))
             let x = origin.x + 4 + (track - knob) * min(1, table.offset / overflow)
             NSColor(calibratedWhite: 1, alpha: 0.28).setFill()
-            NSBezierPath(roundedRect: NSRect(x: x, y: bottom - 3.5, width: knob, height: 3), xRadius: 1.5, yRadius: 1.5).fill()
+            NSBezierPath(roundedRect: NSRect(x: x, y: bottom + 2.5, width: knob, height: 3), xRadius: 1.5, yRadius: 1.5).fill()
         }
         NSGraphicsContext.restoreGraphicsState()
     }
