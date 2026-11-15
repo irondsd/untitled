@@ -2,7 +2,8 @@ import Foundation
 
 struct YAMLSyntax: SyntaxDefinition {
     static let language = NoteLanguage.yaml
-    private static let mapping = SyntaxRegex.compile(#"^ *(?:- +)?((?:[^\s\[\]{},:#'\"][^:#]*?|\"(?:[^\"\\]|\\.)*\"|'(?:[^']|'')*')) *:(?=\s|$)"#)
+    /// A plain key cannot start with a YAML indicator such as `|` or `>`, so Markdown table rows are not keys.
+    private static let mapping = SyntaxRegex.compile(#"^ *(?:- +)?((?:[^\s\[\]{},:#'\"|>@`%][^:#]*?|\"(?:[^\"\\]|\\.)*\"|'(?:[^']|'')*')) *:(?=\s|$)"#)
     private static let flowKey = SyntaxRegex.compile(#"(?:[\{,] *)([^\s\[\]{},:#'\"][^,:{}\[\]]*?) *:(?=\s|$)"#)
     private static let simpleKey = SyntaxRegex.compile(#"^[a-z_][a-z0-9_.-]*$"#)
     private static let yamlWord = SyntaxRegex.compile(#"(?i)^(?:true|false|null|~)$"#)

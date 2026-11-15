@@ -268,6 +268,8 @@ do {
     for snippet in ["enabled: true # toggle", "{name: api, enabled: true}", "- true\n- false", "script: | # shell\n  # not a heading\n  echo true"] {
         try check(SyntaxEngine.analyze(snippet).language == .yaml, "detects additional YAML structure: \(snippet.prefix(24))")
     }
+    let alignedTable = "# Report\n\nPrepared today. Deliverable: a mapping.\n\n| Decision | Pairs | Kept |\n| --- | ---: | ---: |\n| Merge | 40 | 40 |\n\nNote: see below.\n"
+    try check(SyntaxEngine.analyze(alignedTable).language == .markdown, "a right-aligned table delimiter row is not a YAML block scalar")
     try check(SyntaxEngine.analyze("# Set `enabled` to **true**\nenabled: true\nname: api").language == .yaml, "YAML comments can contain Markdown punctuation without changing detection")
     let scalarFixture = "message: the word true and 42 are plain\nport: 8080 # number\nflow: {name: api, enabled: false}\nbase: &defaults\ncopy: *defaults\nscript: >- # comment\n  # literal content\n  port: 99\nend: null"
     let scalarSyntax = SyntaxEngine.analyze(scalarFixture)
