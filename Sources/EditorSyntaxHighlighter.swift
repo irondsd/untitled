@@ -115,14 +115,19 @@ final class SyntaxHighlighter {
             : characters(in: visible.insetBy(dx: 0, dy: -visible.height))
         // Editing shifts existing temporary ranges, so clear the whole note. Few runs remain, so this is cheap.
         manager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: length))
+        // Table pipes are only hidden while the styler draws grid lines in their place.
+        let hidesTableRules = !styler.tables.isEmpty
         for span in index.spans(in: NSIntersectionRange(window, NSRange(location: 0, length: length))) {
-            manager.addTemporaryAttribute(.foregroundColor, value: color(span.kind), forCharacterRange: span.range)
+            let kind = span.kind == .tableRule && !hidesTableRules ? .markup : span.kind
+            manager.addTemporaryAttribute(.foregroundColor, value: color(kind), forCharacterRange: span.range)
         }
         painted = window
         editor.needsDisplay = true
     }
     private func color(_ kind: SyntaxKind) -> NSColor {
         if let cached = palette[kind] { return cached }
+        // Grid lines replace table pipes, so the characters themselves are not drawn.
+        if kind == .tableRule { palette[kind] = .clear; return .clear }
         let rgb: (CGFloat, CGFloat, CGFloat)
         switch kind {
         case .heading, .key, .type: rgb = (0.56, 0.79, 1.0)
@@ -134,7 +139,7 @@ final class SyntaxHighlighter {
         case .marker: rgb = (0.63, 0.81, 0.85)
         case .link: rgb = (0.52, 0.85, 0.92)
         case .tag: rgb = (0.95, 0.58, 0.62)
-        case .markup: rgb = (0.47, 0.51, 0.56)
+        case .markup, .tableRule: rgb = (0.47, 0.51, 0.56)
         case .attribute: rgb = (0.93, 0.79, 0.55)
         case .column(let column):
             let colors: [(CGFloat, CGFloat, CGFloat)] = [

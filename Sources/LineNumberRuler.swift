@@ -90,6 +90,11 @@ final class LineNumberRuler: NSRulerView {
         let active = lines.line(at: editor.selectedRange().location)
 
         for line in first...max(first, last) {
+            // A table's delimiter row is squeezed under its header rule; its label would overlap the header's.
+            if line != active, lines.starts[line] < lines.length,
+               manager.lineFragmentUsedRect(forGlyphAt: manager.glyphIndexForCharacter(at: lines.starts[line]), effectiveRange: nil).height < font.pointSize {
+                continue
+            }
             guard let baseline = baseline(for: line) else { continue }
             let y = convert(NSPoint(x: 0, y: baseline), from: editor).y - font.ascender
             guard y + font.pointSize >= rect.minY, y <= rect.maxY else { continue }

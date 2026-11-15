@@ -13,6 +13,8 @@ struct MarkdownSyntax: SyntaxDefinition {
     private static let emphasis = SyntaxRegex.compile(#"(?<![\\\w*])(?:\*(?=\S)([^*\r\n]*\S|\S)\*|_(?=\S)([^_\r\n]*\S|\S)_)(?!\w)"#)
     private static let link = SyntaxRegex.compile(#"!?\[[^\]\r\n]+\]\([^\s)]+(?: +\"[^\"]*\")?\)|<https?://[^>\s]+>"#)
     private static let reference = SyntaxRegex.compile(#"^ {0,3}\[[^\]]+\]: +\S+"#)
+    /// A table's `|---|:--:|` line, which needs at least one pipe.
+    private static let tableDelimiter = SyntaxRegex.compile(#"^ {0,3}(?=[^|]*\|)\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$"#)
 
     static func confidence(in source: SyntaxSource) -> Int {
         if YAMLSyntax.frontMatterEnd(in: source) != nil { return 110 }
@@ -28,6 +30,10 @@ struct MarkdownSyntax: SyntaxDefinition {
             if source.first(link, line.text) != nil || source.first(reference, line.text) != nil { score += 3; distinctive = true }
             if source.first(strong, line.text) != nil || source.first(emphasis, line.text) != nil
                 || source.first(inlineCode, line.text) != nil { score += 2; distinctive = true }
+            if index > 0, line.text.contains("|"), source.lines[index - 1].text.contains("|"),
+               source.first(tableDelimiter, line.text) != nil {
+                score += 3; distinctive = true
+            }
             if index > 0, source.first(setext, line.text) != nil, !source.lines[index - 1].trimmed.isEmpty {
                 score += 3; distinctive = true
             }
@@ -61,12 +67,31 @@ struct MarkdownSyntax: SyntaxDefinition {
             add(NSRange(location: NSMaxRange(range) - length, length: length), .markup, line)
         }
         func whole(_ line: SyntaxLine) -> NSRange { NSRange(location: 0, length: line.length) }
+        func inline(_ line: SyntaxLine) {
+            let codes = source.matches(inlineCode, line.text)
+            for (expression, kind) in [(strong, SyntaxKind.emphasis), (emphasis, .emphasis), (link, .link), (reference, .link)] {
+                for match in source.matches(expression, line.text) where !codes.contains(where: { NSIntersectionRange($0.range, match.range).length > 0 }) {
+                    add(match.range, kind, line)
+                    if expression === strong { delimiters(match.range, 2, line); style(match.range, .strong, line) }
+                    if expression === emphasis { delimiters(match.range, 1, line); style(match.range, .emphasis, line) }
+                }
+            }
+            for match in codes {
+                add(match.range, .code, line)
+                delimiters(match.range, match.range(at: 1).length, line)
+                style(match.range, .inlineCode, line)
+            }
+        }
         if let front {
             result += YAMLSyntax.spans(in: Array(lines[0...front]), source: source)
         }
+        let text = source.text as NSString
+        var tableEnd = -1
         for (index, line) in lines.enumerated() {
             if source.cancelled() { break }
             if let front, index <= front { continue }
+            // Rows of a table found on an earlier line.
+            if index <= tableEnd { continue }
             let fenceMatch = source.first(fence, line.text)
             if let active = fenced {
                 add(whole(line), .code, line)
@@ -97,6 +122,18 @@ struct MarkdownSyntax: SyntaxDefinition {
             }
             let isParagraph = previousIsParagraph
             previousIsParagraph = false
+            if index + 1 < lines.count, line.text.contains("|"), lines[index + 1].text.contains("|"),
+               source.first(heading, line.text) == nil, let table = MarkdownTables.parse(text, header: line.offset) {
+                styles.append(SyntaxStyleSpan(range: table.range, style: .table))
+                for (offset, row) in table.rows.enumerated() {
+                    let rowLine = lines[index + offset]
+                    if row.isDelimiter { add(whole(rowLine), .tableRule, rowLine); continue }
+                    inline(rowLine)
+                    for pipe in row.pipes { result.append(SyntaxSpan(range: NSRange(location: pipe, length: 1), kind: .tableRule)) }
+                }
+                tableEnd = index + table.rows.count - 1
+                continue
+            }
             if let match = source.first(heading, line.text) {
                 add(whole(line), .heading, line)
                 let marks = line.text.drop(while: { $0 == " " }).prefix(while: { $0 == "#" }).count
@@ -117,19 +154,7 @@ struct MarkdownSyntax: SyntaxDefinition {
             for expression in [list, quote] {
                 if let match = source.first(expression, line.text) { add(match.range, .marker, line) }
             }
-            let codes = source.matches(inlineCode, line.text)
-            for (expression, kind) in [(strong, SyntaxKind.emphasis), (emphasis, .emphasis), (link, .link), (reference, .link)] {
-                for match in source.matches(expression, line.text) where !codes.contains(where: { NSIntersectionRange($0.range, match.range).length > 0 }) {
-                    add(match.range, kind, line)
-                    if expression === strong { delimiters(match.range, 2, line); style(match.range, .strong, line) }
-                    if expression === emphasis { delimiters(match.range, 1, line); style(match.range, .emphasis, line) }
-                }
-            }
-            for match in codes {
-                add(match.range, .code, line)
-                delimiters(match.range, match.range(at: 1).length, line)
-                style(match.range, .inlineCode, line)
-            }
+            inline(line)
         }
         return (result, styles)
     }

@@ -313,6 +313,31 @@ do {
         && !kinds(markdownSyntax, markdownFixture, at: "today**").contains(.markup)
         && kinds(markdownSyntax, markdownFixture, at: "# Plan").contains(.markup), "Markdown delimiters are dimmed as markup, their text is not")
     try check(SyntaxEngine.analyze("service: api\nport: 80\n").styles.isEmpty, "formats without typography return no styles")
+    let tableFixture = "Intro\r\n\r\n| Name 📝 | Score |\r\n|:---|---:|\r\n| Ada | 9 |\r\n|esc \\| pipe|`a`|\r\n\r\nAfter | text\r\n"
+    try check(styleRanges(tableFixture, .table) == ["| Name 📝 | Score |\r\n|:---|---:|\r\n| Ada | 9 |\r\n|esc \\| pipe|`a`|"],
+        "a pipe table is one style from its header to its last row, across CRLF and Unicode")
+    if let table = MarkdownTables.parse(tableFixture as NSString, header: (tableFixture as NSString).range(of: "| Name").location) {
+        let text = tableFixture as NSString
+        try check(table.alignments == [.left, .right] && table.rows.count == 4 && table.rows[1].isDelimiter && table.columnCount == 2,
+            "a table reads its delimiter row's alignment")
+        try check(table.rows[3].cells.map { text.substring(with: $0.range) } == ["esc \\| pipe", "`a`"],
+            "an escaped pipe stays inside its cell")
+        try check(table.rows[0].cells.allSatisfy { $0.open != nil && $0.close != nil }, "cells know their surrounding pipes")
+    } else { try check(false, "a pipe table parses") }
+    let bareTable = "a | b\n--|--\nlong | x\n"
+    let bare = MarkdownTables.parse(bareTable as NSString, header: 0)
+    try check(bare?.rows.count == 3 && bare?.rows[0].cells.first?.open == nil && bare?.rows[0].cells.last?.close == nil,
+        "a table may omit its outer pipes")
+    try check(styleRanges("| a | b |\n|---|\n| 1 | 2 |\n", .table).isEmpty && styleRanges("| a |\n| b |\n", .table).isEmpty
+        && styleRanges("```\n| a |\n|---|\n```\n", .table).isEmpty && styleRanges("    | a |\n    |---|\n", .table).isEmpty,
+        "mismatched delimiters, missing delimiters, code blocks and indented code are not tables")
+    try check(styleRanges("| a |\n|---|\n| 1 |\n\n| 2 |\n", .table) == ["| a |\n|---|\n| 1 |"]
+        && styleRanges("| a |\n|---|\n| 1 |\n# Head\n", .table) == ["| a |\n|---|\n| 1 |"], "a blank line or a heading ends a table")
+    let tableSyntax = SyntaxEngine.analyze(tableFixture)
+    try check(tableSyntax.language == .markdown && kinds(tableSyntax, tableFixture, at: "|:---") == [.tableRule]
+        && kinds(tableSyntax, tableFixture, at: "| Ada").contains(.tableRule) && !kinds(tableSyntax, tableFixture, at: "Ada").contains(.tableRule)
+        && kinds(tableSyntax, tableFixture, at: "`a`").contains(.code), "table pipes and delimiter rows are rules; cells keep inline syntax")
+    try check(SyntaxEngine.detectLanguage("| a | b |\n|---|---|\n| 1 | 2 |\n") == .markdown, "a lone table is detected as Markdown")
     try check(SyntaxEngine.analyze(String(repeating: yamlFixture, count: 1000), cancelled: { true }).spans.isEmpty,
         "obsolete syntax jobs can be cancelled")
     let typescript = #"""

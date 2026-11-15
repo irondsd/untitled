@@ -17,6 +17,9 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
         static func heading(_ level: Int) -> Int { 10 + level }
         static func setextTitle(_ level: Int) -> Int { 20 + level }
         static let setextUnderline = 30, fenceOpen = 31, fenceClose = 32, fenceBoth = 33
+        static let tableRow = 40, tableHeader = 41, tableLast = 42, tableDelimiter = 43, tableDelimiterLast = 44
+        /// Added to a table role when rows omit their outer pipes: the indent stands in for the missing `|`.
+        static let tableIndented = 10
     }
     /// About a quarter second for the first pass on a large note; beyond this, typography is skipped.
     static let maximumTypographySpans = 20_000
@@ -24,7 +27,7 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
     private static let fenceLine = SyntaxRegex.compile(#"^ {0,3}(?:`{3,}|~{3,})"#)
     private static let underlineLine = SyntaxRegex.compile(#"^ {0,3}(?:=+|-+)[ \t]*$"#)
 
-    private weak var editor: NSTextView?
+    weak var editor: NSTextView?
     private(set) var baseFont: NSFont = Theme.font(14)
     private(set) var baseParagraph: NSParagraphStyle = .default
     private var fonts: [Int: NSFont] = [:]
@@ -33,9 +36,13 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
     private(set) var backgrounds: [SyntaxStyleSpan] = []
     /// The latest typographic styles, kept so a base font change can rebuild them.
     private var typography: [SyntaxStyleSpan] = []
+    /// Pipe tables, sorted by location. Columns are aligned with kerning and drawn as a grid.
+    var tables: [EditorTable] = []
+    /// Measured cells per row text and font roles; widths only change with the base font.
+    var cellMetrics: [String: [EditorTable.CellMetric]] = [:]
     /// Whether any role attribute may be present; plain notes skip edit-time fixes entirely.
     private var hasRoles = false
-    private var isApplying = false
+    var isApplying = false
 
     init(editor: NSTextView) {
         self.editor = editor
@@ -50,11 +57,13 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
         baseParagraph = paragraph
         fonts = [:]
         paragraphs = [:]
+        cellMetrics = [:]
         // Setting the editor font replaced every font, so rebuild all roles, not just the changed ones.
         applyTypography(force: true)
+        layoutTables()
     }
 
-    private func font(for role: Int) -> NSFont {
+    func font(for role: Int) -> NSFont {
         if role == 0 { return baseFont }
         if let cached = fonts[role] { return cached }
         let manager = NSFontManager.shared
@@ -73,6 +82,13 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
     private func paragraph(for role: Int) -> NSParagraphStyle {
         if role == 0 { return baseParagraph }
         if let cached = paragraphs[role] { return cached }
+        if (50...54).contains(role) {
+            let style = paragraph(for: role - Paragraph.tableIndented).mutableCopy() as! NSMutableParagraphStyle
+            style.firstLineHeadIndent = cellPadding + pipeWidth
+            style.headIndent = style.firstLineHeadIndent
+            paragraphs[role] = style
+            return style
+        }
         let style = baseParagraph.mutableCopy() as! NSMutableParagraphStyle
         let size = baseFont.pointSize
         func heading(_ level: Int) -> (before: CGFloat, after: CGFloat) {
@@ -83,6 +99,16 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
         case Paragraph.fenceOpen: style.paragraphSpacingBefore = 0.3 * size
         case Paragraph.fenceClose: style.paragraphSpacing = 0.3 * size
         case Paragraph.fenceBoth: style.paragraphSpacingBefore = 0.3 * size; style.paragraphSpacing = 0.3 * size
+        case Paragraph.tableRow, Paragraph.tableHeader, Paragraph.tableLast:
+            style.paragraphSpacingBefore = tableRowPadding + (role == Paragraph.tableHeader ? tableMargin : 0)
+            style.paragraphSpacing = tableRowPadding + (role == Paragraph.tableLast ? tableMargin : 0)
+        case Paragraph.tableDelimiter, Paragraph.tableDelimiterLast:
+            // The delimiter row's characters are hidden behind the header rule, so it only needs a sliver of height.
+            let height = (size * 0.5).rounded()
+            style.minimumLineHeight = height
+            style.maximumLineHeight = height
+            style.lineSpacing = 0
+            if role == Paragraph.tableDelimiterLast { style.paragraphSpacing = tableRowPadding + tableMargin }
         case 21...26: style.paragraphSpacingBefore = heading(role - 20).before * size
         case 11...16:
             let spacing = heading(role - 10)
@@ -103,10 +129,15 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
             backgrounds = drawn
             editor?.needsDisplay = true
         }
-        let typographic = styles.filter { $0.style != .inlineCode }
-        // Fonts and spacing cost layout work per span; a huge note keeps colors and drawn backgrounds only.
-        typography = typographic.count <= Self.maximumTypographySpans ? typographic : []
+        let typographic = styles.filter { $0.style != .inlineCode && $0.style != .table }
+        let parsed = parseTables(styles.filter { $0.style == .table })
+        // Fonts and spacing cost layout work per span or table row; a huge note keeps colors and drawn backgrounds only.
+        let cost = typographic.count + parsed.reduce(0) { $0 + $1.table.rows.count }
+        let within = cost <= Self.maximumTypographySpans
+        typography = within ? typographic : []
+        replaceTables(with: within ? parsed : [])
         applyTypography(force: false)
+        layoutTables()
     }
 
     /// Sets fonts and paragraph styles where their roles differ from the analysis. Unchanged
@@ -116,7 +147,7 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
         // Restyling during input method composition would disturb the marked text; the next analysis catches up.
         guard !editor.hasMarkedText() else { return }
         let text = storage.mutableString, length = storage.length
-        guard hasRoles || !typography.isEmpty || force else { return }
+        guard hasRoles || !typography.isEmpty || !tables.isEmpty || force else { return }
 
         // Font roles: sweep span boundaries, since emphasis can sit inside a heading.
         var events: [(position: Int, delta: Int, style: SyntaxStyle)] = []
@@ -141,8 +172,24 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
                 else { paragraphRuns += [(open, Paragraph.fenceOpen), (close, Paragraph.fenceClose)] }
             case .strong, .emphasis:
                 events += [(range.location, 1, span.style), (NSMaxRange(range), -1, span.style)]
-            case .inlineCode: break
+            case .inlineCode, .table: break
             }
+        }
+        for table in tables {
+            let rows = table.table.rows
+            for index in rows.indices {
+                let line = table.line(index)
+                let role: Int
+                switch index {
+                case 0: role = Paragraph.tableHeader
+                case 1: role = rows.count == 2 ? Paragraph.tableDelimiterLast : Paragraph.tableDelimiter
+                case rows.count - 1: role = Paragraph.tableLast
+                default: role = Paragraph.tableRow
+                }
+                paragraphRuns.append((text.paragraphRange(for: line), role + (table.hasLeadingPipe ? 0 : Paragraph.tableIndented)))
+            }
+            let header = table.line(0)
+            events += [(header.location, 1, .strong), (NSMaxRange(header), -1, .strong)]
         }
         events.sort { $0.position < $1.position }
         var fontRuns: [(range: NSRange, role: Int)] = []
@@ -228,6 +275,7 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
                      range: NSRange, changeInLength delta: Int) {
         guard mask.contains(.editedCharacters), !isApplying else { return }
         moveBackgrounds(after: range, changeInLength: delta)
+        let edited = moveTables(after: range, changeInLength: delta)
         guard hasRoles, storage.length > 0 else { return }
         // `mutableString` avoids copying the whole note on every keystroke.
         let undoing = editor?.undoManager?.isUndoing == true || editor?.undoManager?.isRedoing == true
@@ -239,6 +287,8 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
         if NSMaxRange(range) >= NSMaxRange(first), NSMaxRange(range) < text.length {
             fixParagraph(text.paragraphRange(for: NSRange(location: NSMaxRange(range), length: 0)), storage: storage)
         }
+        // Realign the edited table now, so its columns never lag behind typing.
+        if !edited.isEmpty { relayoutTables(edited, inserted: range, changeInLength: delta, storage: storage) }
     }
 
     /// Typed text continues a run it sits inside, such as a bold word; otherwise it takes the
@@ -295,6 +345,7 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
         case 11...16: keeps = isHeading
         case 21...26: keeps = isTitle
         case Paragraph.setextUnderline: keeps = isUnderline
+        case Paragraph.tableRow...(Paragraph.tableDelimiterLast + Paragraph.tableIndented): keeps = line.contains("|")
         default: keeps = isFence
         }
         if !keeps {
@@ -337,11 +388,13 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
 
     /// Fills code backgrounds intersecting `dirty`, in text view coordinates, before the text draws.
     func drawBackgrounds(in dirty: NSRect) {
-        guard !backgrounds.isEmpty, let editor, let manager = editor.layoutManager,
+        guard !backgrounds.isEmpty || !tables.isEmpty, let editor, let manager = editor.layoutManager,
               let container = editor.textContainer, let storage = editor.textStorage, storage.length > 0 else { return }
         let origin = editor.textContainerOrigin
         let glyphs = manager.glyphRange(forBoundingRect: dirty.offsetBy(dx: -origin.x, dy: -origin.y), in: container)
         let visible = manager.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
+        drawTables(visible: visible, manager: manager, storage: storage, origin: origin)
+        guard !backgrounds.isEmpty else { return }
         // Non-overlapping ranges sorted by location also have ascending ends.
         var low = 0, high = backgrounds.count
         while low < high {
@@ -358,10 +411,10 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
     }
 
     /// The used rect excludes paragraph spacing but includes the line spacing below the text.
-    private func usedRect(at character: Int, manager: NSLayoutManager) -> NSRect {
+    func usedRect(at character: Int, manager: NSLayoutManager) -> NSRect {
         manager.lineFragmentUsedRect(forGlyphAt: manager.glyphIndexForCharacter(at: character), effectiveRange: nil)
     }
-    private func lineSpacing(at character: Int, storage: NSTextStorage) -> CGFloat {
+    func lineSpacing(at character: Int, storage: NSTextStorage) -> CGFloat {
         (storage.attribute(.paragraphStyle, at: character, effectiveRange: nil) as? NSParagraphStyle)?.lineSpacing ?? 0
     }
 

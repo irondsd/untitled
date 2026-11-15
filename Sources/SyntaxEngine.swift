@@ -39,6 +39,8 @@ enum SyntaxKind: Hashable {
     case heading, marker, key, string, number, literal, comment, code, emphasis, link, keyword, type, function, tag, attribute
     /// Characters that only format other text, such as Markdown's `#`, `**` and backticks; drawn dimmed.
     case markup
+    /// Table pipes and the delimiter row; the editor draws grid lines in their place.
+    case tableRule
     /// Delimited text cycles through six column colors, independent of field contents.
     case column(Int)
 }
@@ -55,6 +57,8 @@ enum SyntaxStyle: Hashable {
     /// A fenced code block from the opening fence line to the closing one, inclusive.
     case codeBlock
     case inlineCode, strong, emphasis
+    /// A pipe table from its header line to its last row; the editor re-parses its structure.
+    case table
 }
 struct SyntaxStyleSpan {
     let range: NSRange

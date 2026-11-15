@@ -760,6 +760,67 @@ extension AppDelegate {
                 try check(storedFont(2)?.pointSize == headingSize, "automatic detection restores Markdown typography")
                 try flush()
                 try close(typeID)
+                // Tables align their columns with kerning and keep the note's text exact.
+                newTab(nil)
+                let tableID = currentID!, tablePane = editors[tableID]!, tableView = tablePane.textView
+                let tableSource = "Intro\n\n| Name | Score |\n|:-----|------:|\n| Ada | 9 |\n| Grace Hopper | 10 |\n\nAfter\n"
+                tableView.insertText(tableSource, replacementRange: NSRange(location: 0, length: 0))
+                try await waitForSyntax(tablePane)
+                @MainActor func pipeColumns() -> [[CGFloat]] {
+                    guard let manager = tableView.layoutManager, let table = tablePane.syntax.styler.tables.first else { return [] }
+                    return table.table.rows.indices.filter { !table.table.rows[$0].isDelimiter }.map { row in
+                        let line = table.line(row), text = tableView.string as NSString
+                        return (line.location..<NSMaxRange(line)).filter { text.character(at: $0) == 0x7C }.map { pipe in
+                            let glyph = manager.glyphIndexForCharacter(at: pipe)
+                            return manager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minX + manager.location(forGlyphAt: glyph).x
+                        }
+                    }
+                }
+                @MainActor func columnsAligned() -> Bool {
+                    let rows = pipeColumns()
+                    guard let first = rows.first, first.count == 3, rows.count >= 3 else { return false }
+                    return rows.allSatisfy { $0.count == first.count && zip($0, first).allSatisfy { abs($0 - $1) < 0.5 } }
+                }
+                @MainActor func tableOffset(_ needle: String) -> Int { (tableView.string as NSString).range(of: needle).location }
+                @MainActor func tableBold(_ offset: Int) -> Bool {
+                    (tableView.textStorage?.attribute(.font, at: offset, effectiveRange: nil) as? NSFont)
+                        .map { NSFontManager.shared.traits(of: $0).contains(.boldFontMask) } ?? false
+                }
+                try check(tablePane.syntax.styler.tables.count == 1 && columnsAligned() && tableBold(tableOffset("Name"))
+                    && !tableBold(tableOffset("Ada")), "Markdown tables align their columns under a bold header")
+                try flush()
+                try check(try store.text(tableID) == tableSource, "an aligned table persists as exact source")
+                // Typing a longer cell realigns every row at once, before analysis runs.
+                tableView.undoManager?.removeAllActions()
+                tableView.breakUndoCoalescing()
+                tableView.setSelectedRange(NSRange(location: tableOffset("Ada") + 3, length: 0))
+                tableView.insertText(" Lovelace, Countess", replacementRange: tableView.selectedRange())
+                try check(columnsAligned(), "typing in a cell realigns the table immediately")
+                try await waitForSyntax(tablePane)
+                try check(columnsAligned(), "analysis keeps the edited table aligned")
+                tableView.undoManager?.undo()
+                try await waitForSyntax(tablePane)
+                try check(!tableView.string.contains("Countess") && columnsAligned(), "undo restores the table's alignment")
+                try check(tablePane.lineNumbers.baseline(for: 4).map { label in
+                    guard let manager = tableView.layoutManager else { return false }
+                    let glyph = manager.glyphIndexForCharacter(at: tableOffset("Ada"))
+                    let text = tableView.textContainerOrigin.y + manager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY
+                        + manager.location(forGlyphAt: glyph).y
+                    return abs(label - text) < 0.5
+                } ?? false, "line numbers follow table rows")
+                // Breaking the delimiter row turns the table back into plain lines without alignment.
+                let delimiter = (tableView.string as NSString).range(of: "|:-----|------:|\n")
+                tableView.setSelectedRange(delimiter)
+                tableView.insertText("", replacementRange: delimiter)
+                try await waitForSyntax(tablePane)
+                var kerned = false
+                tableView.textStorage?.enumerateAttribute(.kern, in: NSRange(location: 0, length: tableView.textStorage!.length)) { value, _, _ in
+                    if value != nil { kerned = true }
+                }
+                try check(tablePane.syntax.styler.tables.isEmpty && !kerned && !tableBold(tableOffset("Name")),
+                    "a line that is no longer a table loses its alignment")
+                try flush()
+                try close(tableID)
                 newTab(nil)
                 let scriptID = currentID!, scriptPane = editors[currentID!]!, scriptView = editors[currentID!]!.textView
                 let typeScriptPaste = "interface User { name: string; }\nconst greet = (user: User): string => `Hello ${user.name}`;\n"
