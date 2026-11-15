@@ -315,6 +315,28 @@ do {
         && !kinds(markdownSyntax, markdownFixture, at: "today**").contains(.markup)
         && kinds(markdownSyntax, markdownFixture, at: "# Plan").contains(.markup), "Markdown delimiters are dimmed as markup, their text is not")
     try check(SyntaxEngine.analyze("service: api\nport: 80\n").styles.isEmpty, "formats without typography return no styles")
+    func links(_ source: String) -> [String] {
+        SyntaxEngine.analyze(source).styles.compactMap {
+            guard case .link(let target) = $0.style else { return nil }
+            return "\((source as NSString).substring(with: $0.range)) -> \(target)"
+        }
+    }
+    let linkFixture = "# Links 📝\n\nSee [docs](https://example.com/a?b=1 \"Title\"), <https://auto.dev/x>.\n"
+        + "Bare https://en.wikipedia.org/wiki/Foo_(bar). And (https://paren.io/p) or **https://bold.io**!\n"
+        + "Skip `https://code.io` and [rel](./notes.md) and [js](javascript:alert(1)) and https:// alone.\n"
+        + "[ref]: https://ref.io/x\nmail [me](mailto:a@b.co) and | https://cell.io | x |\n```\nhttps://fenced.io\n```\n"
+    try check(links(linkFixture) == [
+        "[docs](https://example.com/a?b=1 \"Title\") -> https://example.com/a?b=1",
+        "<https://auto.dev/x> -> https://auto.dev/x",
+        "https://en.wikipedia.org/wiki/Foo_(bar) -> https://en.wikipedia.org/wiki/Foo_(bar)",
+        "https://paren.io/p -> https://paren.io/p",
+        "https://bold.io -> https://bold.io",
+        "https://ref.io/x -> https://ref.io/x",
+        "[me](mailto:a@b.co) -> mailto:a@b.co",
+        "https://cell.io -> https://cell.io",
+    ], "Markdown links, autolinks and bare addresses open; code, relative paths and other schemes do not")
+    try check(kinds(SyntaxEngine.analyze(linkFixture), linkFixture, at: "https://en.wikipedia").contains(.link),
+        "bare addresses are colored as links")
     let tableFixture = "Intro\r\n\r\n| Name 📝 | Score |\r\n|:---|---:|\r\n| Ada | 9 |\r\n|esc \\| pipe|`a`|\r\n\r\nAfter | text\r\n"
     try check(styleRanges(tableFixture, .table) == ["| Name 📝 | Score |\r\n|:---|---:|\r\n| Ada | 9 |\r\n|esc \\| pipe|`a`|"],
         "a pipe table is one style from its header to its last row, across CRLF and Unicode")

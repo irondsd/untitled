@@ -34,6 +34,8 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
     private var paragraphs: [Int: NSParagraphStyle] = [:]
     /// Code block and inline code ranges, sorted by location and non-overlapping.
     private(set) var backgrounds: [SyntaxStyleSpan] = []
+    /// Openable links, sorted by location and non-overlapping.
+    private(set) var links: [SyntaxStyleSpan] = []
     /// The latest typographic styles, kept so a base font change can rebuild them.
     private var typography: [SyntaxStyleSpan] = []
     /// Pipe tables, sorted by location. Columns are aligned with kerning and drawn as a grid.
@@ -57,6 +59,7 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
         super.init()
         editor.textStorage?.delegate = self
         (editor.textContainer as? EditorTextContainer)?.tableOffset = { [weak self] in self?.tableOffset(at: $0) }
+        (editor as? EditorTextView)?.linkAt = { [weak self] in self?.link(at: $0) }
         selectionObserver = NotificationCenter.default.addObserver(forName: NSTextView.didChangeSelectionNotification,
             object: editor, queue: .main) { [weak self] _ in self?.revealSelectionInTable() }
     }
@@ -144,7 +147,16 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
             backgrounds = drawn
             editor?.needsDisplay = true
         }
-        let typographic = styles.filter { $0.style != .inlineCode && $0.style != .table }
+        let linked = styles.filter { if case .link = $0.style { return true } else { return false } }
+            .sorted { $0.range.location < $1.range.location }
+        if linked.map(\.range) != links.map(\.range) || linked.map(\.style) != links.map(\.style) {
+            links = linked
+            (editor as? EditorTextView)?.refreshHoveredLink()
+        }
+        let typographic = styles.filter {
+            if case .link = $0.style { return false }
+            return $0.style != .inlineCode && $0.style != .table
+        }
         let parsed = parseTables(styles.filter { $0.style == .table })
         // Fonts and spacing cost layout work per span or table row; a huge note keeps colors and drawn backgrounds only.
         // A table row costs about ten spans: it is measured, kerned and laid out wide, and widening a
@@ -189,7 +201,7 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
                 else { paragraphRuns += [(open, Paragraph.fenceOpen), (close, Paragraph.fenceClose)] }
             case .strong, .emphasis:
                 events += [(range.location, 1, span.style), (NSMaxRange(range), -1, span.style)]
-            case .inlineCode, .table: break
+            case .inlineCode, .table, .link: break
             }
         }
         for table in tables {
@@ -291,7 +303,8 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
     func textStorage(_ storage: NSTextStorage, willProcessEditing mask: NSTextStorageEditActions,
                      range: NSRange, changeInLength delta: Int) {
         guard mask.contains(.editedCharacters), !isApplying else { return }
-        moveBackgrounds(after: range, changeInLength: delta)
+        backgrounds = Self.move(backgrounds, after: range, changeInLength: delta)
+        links = Self.move(links, after: range, changeInLength: delta)
         let edited = moveTables(after: range, changeInLength: delta)
         guard hasRoles, storage.length > 0 else { return }
         // `mutableString` avoids copying the whole note on every keystroke.
@@ -388,10 +401,10 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
     // MARK: Code backgrounds
 
     /// Shifts ranges after an edit; a range touching the edit grows or shrinks with it.
-    private func moveBackgrounds(after range: NSRange, changeInLength delta: Int) {
-        guard !backgrounds.isEmpty else { return }
+    private static func move(_ spans: [SyntaxStyleSpan], after range: NSRange, changeInLength delta: Int) -> [SyntaxStyleSpan] {
+        guard !spans.isEmpty else { return spans }
         let oldEnd = NSMaxRange(range) - delta
-        backgrounds = backgrounds.compactMap { span in
+        return spans.compactMap { span in
             var start = span.range.location, end = NSMaxRange(span.range)
             if end < range.location { return span }
             if start >= oldEnd { start += delta; end += delta }
@@ -401,6 +414,27 @@ final class EditorStyler: NSObject, NSTextStorageDelegate {
             }
             return end > start ? SyntaxStyleSpan(range: NSRange(location: start, length: end - start), style: span.style) : nil
         }
+    }
+
+    // MARK: Links
+
+    /// The link drawn at a point in text view coordinates; blank space beside a line has none.
+    func link(at point: NSPoint) -> (range: NSRange, url: URL)? {
+        guard !links.isEmpty, let editor, let manager = editor.layoutManager, let container = editor.textContainer else { return nil }
+        let origin = editor.textContainerOrigin
+        let local = NSPoint(x: point.x - origin.x, y: point.y - origin.y)
+        let glyph = manager.glyphIndex(for: local, in: container, fractionOfDistanceThroughGlyph: nil)
+        guard glyph < manager.numberOfGlyphs,
+              manager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).contains(local) else { return nil }
+        let character = manager.characterIndexForGlyph(at: glyph)
+        var low = 0, high = links.count
+        while low < high {
+            let mid = (low + high) / 2
+            if NSMaxRange(links[mid].range) <= character { low = mid + 1 } else { high = mid }
+        }
+        guard low < links.count, NSLocationInRange(character, links[low].range),
+              case .link(let target) = links[low].style, let url = URL(string: target) else { return nil }
+        return (links[low].range, url)
     }
 
     /// Fills code backgrounds intersecting `dirty`, in text view coordinates, before the text draws.

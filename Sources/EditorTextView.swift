@@ -29,6 +29,11 @@ final class EditorTextView: NSTextView {
     /// Draws behind the text, such as code block backgrounds; the editor itself draws no background.
     var onDrawBackground: ((NSRect) -> Void)?
     var zeroWidthFindLocations: [Int] = [] { didSet { needsDisplay = true } }
+    /// The link under a point in view coordinates. Hovering underlines it; Command-click opens it.
+    var linkAt: ((NSPoint) -> (range: NSRange, url: URL)?)?
+    private var hoveredLink: NSRange?
+    private var showsLinkCursor = false
+    private var linkTracking: NSTrackingArea?
     private var multipleSelections: [NSValue]? { didSet { needsDisplay = true } }
     private var nativeMultipleSelection: [NSValue] = []
     private(set) var isSettingEditingSelections = false
@@ -57,8 +62,60 @@ final class EditorTextView: NSTextView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command, event.clickCount == 1,
+           let link = linkAt?(convert(event.locationInWindow, from: nil)) {
+            NSWorkspace.shared.open(link.url)
+            return
+        }
         multipleSelections = nil
         super.mouseDown(with: event)
+    }
+
+    // MARK: Links
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let linkTracking { removeTrackingArea(linkTracking) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        linkTracking = area
+    }
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        hover(at: convert(event.locationInWindow, from: nil), modifiers: event.modifierFlags)
+    }
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        setHoveredLink(nil, command: false)
+    }
+    override func flagsChanged(with event: NSEvent) {
+        super.flagsChanged(with: event)
+        refreshHoveredLink()
+    }
+
+    /// Re-checks the pointer, such as after a modifier change or an analysis that moved links.
+    func refreshHoveredLink() {
+        guard let window else { return }
+        hover(at: convert(window.mouseLocationOutsideOfEventStream, from: nil), modifiers: NSEvent.modifierFlags)
+    }
+    private func hover(at point: NSPoint, modifiers: NSEvent.ModifierFlags) {
+        let link = visibleRect.contains(point) ? linkAt?(point) : nil
+        setHoveredLink(link?.range, command: modifiers.intersection(.deviceIndependentFlagsMask) == .command)
+    }
+
+    /// The underline is a temporary attribute, so it never reaches the note, clipboard or undo stack.
+    private func setHoveredLink(_ range: NSRange?, command: Bool) {
+        if range != hoveredLink, let manager = layoutManager, let length = textStorage?.length {
+            // Edits shift temporary ranges, so clear the whole note rather than the remembered range.
+            manager.removeTemporaryAttribute(.underlineStyle, forCharacterRange: NSRange(location: 0, length: length))
+            if let range { manager.addTemporaryAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, forCharacterRange: range) }
+            hoveredLink = range
+        }
+        let pointer = range != nil && command
+        // The I-beam comes back only when this view put up the hand, never over other views' cursors.
+        if pointer { NSCursor.pointingHand.set() } else if showsLinkCursor { NSCursor.iBeam.set() }
+        showsLinkCursor = pointer
     }
 
     private func validateMultipleSelections() {

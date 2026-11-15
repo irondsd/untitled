@@ -59,6 +59,8 @@ enum SyntaxStyle: Hashable {
     case inlineCode, strong, emphasis
     /// A pipe table from its header line to its last row; the editor re-parses its structure.
     case table
+    /// A link or bare web address that Command-click opens; the target is an http(s) or mailto URL.
+    case link(String)
 }
 struct SyntaxStyleSpan {
     let range: NSRange

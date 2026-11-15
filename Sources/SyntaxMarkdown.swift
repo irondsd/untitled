@@ -13,6 +13,8 @@ struct MarkdownSyntax: SyntaxDefinition {
     private static let emphasis = SyntaxRegex.compile(#"(?<![\\\w*])(?:\*(?=\S)([^*\r\n]*\S|\S)\*|_(?=\S)([^_\r\n]*\S|\S)_)(?!\w)"#)
     private static let link = SyntaxRegex.compile(#"!?\[[^\]\r\n]+\]\([^\s)]+(?: +\"[^\"]*\")?\)|<https?://[^>\s]+>"#)
     private static let reference = SyntaxRegex.compile(#"^ {0,3}\[[^\]]+\]: +\S+"#)
+    /// A bare web address; trailing punctuation and unbalanced closing brackets are trimmed afterwards.
+    private static let bareURL = SyntaxRegex.compile(#"(?<![\w/@.:])https?://[^\s<>"'`|\\]+"#)
     /// A table's `|---|:--:|` line, which needs at least one pipe.
     private static let tableDelimiter = SyntaxRegex.compile(#"^ {0,3}(?=[^|]*\|)\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$"#)
 
@@ -44,6 +46,38 @@ struct MarkdownSyntax: SyntaxDefinition {
 
     static func highlight(_ source: SyntaxSource) -> [SyntaxSpan] { tokenize(source).spans }
 
+    /// The URL of `[text](url "title")`, `![alt](url)` or `<url>`, when it is a web or mail address.
+    static func linkTarget(_ markup: String) -> String? {
+        let target: Substring
+        if markup.hasPrefix("<") { target = markup.dropFirst().dropLast() }
+        else if let open = markup.range(of: "](") { target = markup[open.upperBound...].prefix { $0 != " " && $0 != ")" } }
+        else { return nil }
+        return isWebAddress(String(target)) ? String(target) : nil
+    }
+
+    /// Only these open from a note: relative paths and other schemes could launch arbitrary apps.
+    static func isWebAddress(_ target: String) -> Bool {
+        guard let url = URL(string: target), let scheme = url.scheme?.lowercased() else { return false }
+        if scheme == "mailto" { return target.count > 7 }
+        return (scheme == "http" || scheme == "https") && url.host?.isEmpty == false
+    }
+
+    /// Drops sentence punctuation after an address, and a closing bracket it never opened.
+    static func trimmedURL(_ range: NSRange, in text: NSString) -> NSRange {
+        var end = NSMaxRange(range)
+        let punctuation = Set(".,:;!?*_~".utf16)
+        while end > range.location {
+            let character = text.character(at: end - 1)
+            if punctuation.contains(character) { end -= 1; continue }
+            if let open = [UInt16(41): UInt16(40), 93: 91][character] {
+                let body = text.substring(with: NSRange(location: range.location, length: end - range.location)).utf16
+                if body.filter({ $0 == character }).count > body.filter({ $0 == open }).count { end -= 1; continue }
+            }
+            break
+        }
+        return NSRange(location: range.location, length: end - range.location)
+    }
+
     static func tokenize(_ source: SyntaxSource) -> (spans: [SyntaxSpan], styles: [SyntaxStyleSpan]) {
         let lines = source.lines
         var result: [SyntaxSpan] = [], styles: [SyntaxStyleSpan] = []
@@ -69,12 +103,28 @@ struct MarkdownSyntax: SyntaxDefinition {
         func whole(_ line: SyntaxLine) -> NSRange { NSRange(location: 0, length: line.length) }
         func inline(_ line: SyntaxLine) {
             let codes = source.matches(inlineCode, line.text)
+            func inCode(_ range: NSRange) -> Bool { codes.contains { NSIntersectionRange($0.range, range).length > 0 } }
+            let text = line.text as NSString
+            var linked: [NSRange] = []
             for (expression, kind) in [(strong, SyntaxKind.emphasis), (emphasis, .emphasis), (link, .link), (reference, .link)] {
-                for match in source.matches(expression, line.text) where !codes.contains(where: { NSIntersectionRange($0.range, match.range).length > 0 }) {
+                for match in source.matches(expression, line.text) where !inCode(match.range) {
                     add(match.range, kind, line)
                     if expression === strong { delimiters(match.range, 2, line); style(match.range, .strong, line) }
                     if expression === emphasis { delimiters(match.range, 1, line); style(match.range, .emphasis, line) }
+                    if expression === link {
+                        linked.append(match.range)
+                        if let target = linkTarget(text.substring(with: match.range)) { style(match.range, .link(target), line) }
+                    }
                 }
+            }
+            // Bare addresses, including a reference definition's target.
+            for match in source.matches(bareURL, line.text) {
+                let range = trimmedURL(match.range, in: text)
+                guard !inCode(range), !linked.contains(where: { NSIntersectionRange($0, range).length > 0 }) else { continue }
+                let target = text.substring(with: range)
+                guard isWebAddress(target) else { continue }
+                add(range, .link, line)
+                style(range, .link(target), line)
             }
             for match in codes {
                 add(match.range, .code, line)

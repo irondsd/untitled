@@ -661,6 +661,56 @@ extension AppDelegate {
                 try await waitForSyntax(restoredSyntaxPane)
                 try check(restoredSyntaxPane.syntax.language == .markdown && restoredSyntaxPane.textView.string == markdownPaste,
                     "restored notes detect syntax from their plain-text content")
+                // Links: hovering underlines a link's own glyphs, and Command-click finds it the same way.
+                do {
+                    newTab(nil)
+                    let linkID = currentID!, linkPane = editors[linkID]!, linkView = linkPane.textView
+                    let linkSource = "# Links\n\nRead [the docs](https://example.com/docs) or https://example.org.\n"
+                    linkView.insertText(linkSource, replacementRange: NSRange(location: 0, length: 0))
+                    try await waitForSyntax(linkPane)
+                    let linkStyler = linkPane.syntax.styler
+                    @MainActor func point(_ needle: String) -> NSPoint {
+                        let manager = linkView.layoutManager!, location = (linkView.string as NSString).range(of: needle).location
+                        let glyphs = manager.glyphRange(forCharacterRange: NSRange(location: location, length: 1), actualCharacterRange: nil)
+                        let rect = manager.boundingRect(forGlyphRange: glyphs, in: linkView.textContainer!)
+                        return NSPoint(x: rect.midX + linkView.textContainerOrigin.x, y: rect.midY + linkView.textContainerOrigin.y)
+                    }
+                    @MainActor func target(_ needle: String) -> String? { linkStyler.link(at: point(needle))?.url.absoluteString }
+                    let pastLine = NSPoint(x: linkView.bounds.maxX - 2, y: point("example.org").y)
+                    try check(target("the docs") == "https://example.com/docs" && target("example.com/docs") == "https://example.com/docs"
+                        && target("example.org") == "https://example.org" && target("Read") == nil && target("org.") == "https://example.org"
+                        && linkStyler.link(at: pastLine) == nil, "links are hit only over their own text, without trailing punctuation")
+                    @MainActor func underlined(_ needle: String) -> Bool {
+                        let location = (linkView.string as NSString).range(of: needle).location
+                        return linkView.layoutManager!.temporaryAttribute(.underlineStyle, atCharacterIndex: location, effectiveRange: nil) != nil
+                    }
+                    @MainActor func move(to needle: String?) {
+                        let local = needle.map(point) ?? NSPoint(x: linkView.bounds.maxX - 2, y: point("Read").y)
+                        let event = NSEvent.mouseEvent(with: .mouseMoved, location: linkView.convert(local, to: nil), modifierFlags: [],
+                            timestamp: 0, windowNumber: linkView.window!.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0)!
+                        linkView.mouseMoved(with: event)
+                    }
+                    move(to: "the docs")
+                    try check(underlined("[the docs]") && underlined("https://example.com") && !underlined("https://example.org"),
+                        "hovering a link underlines all of it")
+                    move(to: "example.org")
+                    try check(!underlined("[the docs]") && underlined("https://example.org") && !underlined("."), "the underline follows the pointer")
+                    move(to: nil)
+                    try check(!underlined("https://example.org"), "moving off a link removes its underline")
+                    // Typing before a link moves it at once, before the next analysis.
+                    linkView.setSelectedRange(NSRange(location: (linkView.string as NSString).range(of: "Read").location, length: 0))
+                    linkView.insertText("Now ", replacementRange: linkView.selectedRange())
+                    try check(target("the docs") == "https://example.com/docs", "typing before a link keeps it under its text")
+                    try await waitForSyntax(linkPane)
+                    linkPane.setStylesMarkdown(false)
+                    try check(linkStyler.links.isEmpty && target("the docs") == nil, "Styled Markdown off makes links plain text")
+                    linkPane.setStylesMarkdown(true)
+                    try check(linkStyler.links.count == 2, "Styled Markdown on restores links")
+                    try flush()
+                    try check(try store.text(linkID) == linkSource.replacingOccurrences(of: "Read", with: "Now Read"),
+                        "links never change the note")
+                    try close(linkID)
+                }
                 // Markdown typography uses real layout attributes, which must never reach the file, clipboard or undo.
                 newTab(nil)
                 let typeID = currentID!, typePane = editors[typeID]!, typeView = typePane.textView
