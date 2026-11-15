@@ -443,7 +443,7 @@ extension EditorStyler {
     /// Scrolls a wide table sideways with a horizontal swipe or Shift-scroll over it. A gesture
     /// commits to one direction when it starts, so scrolling the note never nudges a table.
     func scrollTable(with event: NSEvent) -> Bool {
-        guard !tables.isEmpty, let editor, let manager = editor.layoutManager else { return false }
+        guard !tables.isEmpty, let editor else { return false }
         let legacy = event.phase.isEmpty && event.momentumPhase.isEmpty
         if legacy || event.phase.contains(.began) || event.phase.contains(.mayBegin) {
             scrollingTable = nil
