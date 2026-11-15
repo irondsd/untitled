@@ -540,7 +540,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     }
     @objc private func showAbout(_ sender: Any?) {
         NSApp.orderFrontStandardAboutPanel(options: [
-            .applicationName: "untitled", .applicationVersion: "0.1.4",
+            .applicationName: "untitled", .applicationVersion: "0.1.5",
             .credits: NSAttributedString(string: "A quiet place for things you want to keep.\nNative macOS. Notes stay on this Mac.")
         ])
     }
