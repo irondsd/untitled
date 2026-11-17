@@ -264,6 +264,18 @@ extension AppDelegate {
                 let firstController = settingsController
                 try check(command(",", code: 43) && settingsController === firstController,
                     "Settings reuses a single window")
+                try check(settingsController?.tabs.tabViewItems.map(\.label) == ["Settings", "Hotkeys"]
+                    && settingsController?.tabs.tabStyle == .toolbar, "Settings has native Settings and Hotkeys tabs")
+                let hotkeys = Hotkey.list(from: NSApp.mainMenu)
+                for expected in [Hotkey(title: "Settings", keys: "⌘,"), Hotkey(title: "Reopen Closed Tab", keys: "⇧⌘T"),
+                                 Hotkey(title: "Duplicate Line Down", keys: "⌥⇧↓"), Hotkey(title: "Next Tab", keys: "⌃⇥"),
+                                 Hotkey(title: "Select Tab by Position", keys: "⌘1…9"), Hotkey(title: "Decrease Text Size", keys: "⌘−")] {
+                    try check(hotkeys.contains(expected), "Hotkeys lists \(expected.title) as \(expected.keys)")
+                }
+                try check(hotkeys.filter { $0.title == "Increase Text Size" }.count == 1, "Hotkeys skips hidden alternates")
+                settingsController?.tabs.selectedTabViewItemIndex = 1
+                try check(settingsController?.hotkeys.rows == hotkeys, "the Hotkeys tab shows the menu's shortcuts")
+                settingsController?.tabs.selectedTabViewItemIndex = 0
                 // Key-window routing is checked in the active preview; this test app is inactive.
                 let openIDsBeforeClose = store.session.openIDs
                 settingsController?.window?.performClose(nil)

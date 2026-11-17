@@ -66,6 +66,9 @@ final class SettingsController: NSWindowController, NSTextFieldDelegate {
     private var preferences: EditorPreferences
     var onChange: ((EditorPreferences) -> Void)?
 
+    let tabs = NSTabViewController()
+    let hotkeys = HotkeysViewController()
+
     init(preferences: EditorPreferences) {
         self.preferences = preferences
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 385),
@@ -73,9 +76,13 @@ final class SettingsController: NSWindowController, NSTextFieldDelegate {
         window.title = "Settings"
         window.isReleasedWhenClosed = false
         window.tabbingMode = .disallowed
+        window.toolbarStyle = .preference
         window.appearance = NSAppearance(named: .darkAqua)
         super.init(window: window)
-        let content = window.contentView!
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 385))
+        let general = NSViewController()
+        general.view = content
+        general.preferredContentSize = content.frame.size
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -152,6 +159,16 @@ final class SettingsController: NSWindowController, NSTextFieldDelegate {
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .secondaryLabelColor
         stack.addArrangedSubview(hint)
+        // Native toolbar tabs, like System Settings-era preference windows.
+        tabs.tabStyle = .toolbar
+        tabs.transitionOptions = [.allowUserInteraction]
+        for (controller, title, symbol) in [(general, "Settings", "gearshape"), (hotkeys, "Hotkeys", "keyboard")] {
+            let item = NSTabViewItem(viewController: controller)
+            item.label = title
+            item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+            tabs.addTabViewItem(item)
+        }
+        window.contentViewController = tabs
         refresh(preferences)
         window.center()
     }

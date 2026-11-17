@@ -54,7 +54,7 @@ The editor opens UTF-8 and UTF-16 text regardless of extension. Finder registrat
 - CSV and TSV cycle through six column colors, with separate separator colors. Double-quoted fields support embedded commas/tabs, newlines and doubled quotes; empty cells keep later columns aligned. Detection needs at least two consistent records; two-column CSV also needs a quoted or numeric cell, or a third record, to avoid treating short prose as a table. Single-row or irregular tables can use the CSV/TSV menu overrides. Detection follows content rather than the filename, and highlighting never reformats data.
 - The Syntax menu overrides detection per note: choose Plain Text or a specific format, or Detect Automatically (the default, which shows the detected format). The choice is saved with the note.
 - Save As suggests a file extension from the note's syntax (`.yaml`, `.json`, `.md`, `.html`, `.xml`, `.css`, `.sh`, `.csv`, `.tsv`, `.js`/`.jsx`/`.ts`/`.tsx` depending on JSX and type annotations, otherwise `.txt`) unless the note title already has one.
-- Settings (⌘,) adjusts background opacity, background black level (50–100%), font brightness, editor font, default font size (10.0–36.0 pt in 0.1 pt steps), and line-number visibility. Changes apply immediately to open and new tabs and persist locally. Changing the default size also sets the current size; temporary zoom leaves the default unchanged, and ⌘0 returns to it.
+- Settings (⌘,) adjusts background opacity, background black level (50–100%), font brightness, editor font, default font size (10.0–36.0 pt in 0.1 pt steps), and line-number visibility. Its Hotkeys tab lists every keyboard shortcut, read from the menus so it always matches the real bindings. Changes apply immediately to open and new tabs and persist locally. Changing the default size also sets the current size; temporary zoom leaves the default unchanged, and ⌘0 returns to it.
 - The Font menu lists installed monospaced families, each shown in its own face, after the default SF Mono. The editor and line numbers use the family's regular face; changing it keeps the current zoom. If a chosen family is later uninstalled, the editor falls back to SF Mono and Settings marks the choice as not installed.
 - View → Background also offers transparency presets, kept in sync with Settings. The window uses native background blur; its appearance respects macOS transparency settings.
 
@@ -62,7 +62,7 @@ The editor opens UTF-8 and UTF-16 text regardless of extension. Finder registrat
 
 | Shortcut                 | Action                                                                                                         |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| ⌘,                       | Settings                                                                                                       |
+| ⌘,                       | Settings (the Hotkeys tab lists every shortcut)                                                                |
 | ⌘T / ⌘N                  | New tab/note                                                                                                   |
 | ⌘1…⌘9                    | Select tab by position                                                                                         |
 | ⌃Tab / ⇧⌃Tab             | Next/previous tab                                                                                              |
