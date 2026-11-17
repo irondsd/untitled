@@ -76,6 +76,7 @@ The editor opens UTF-8 and UTF-16 text regardless of extension. Finder registrat
 | ⌘F / ⌘G / ⇧⌘G            | Find / next / previous                                                                                         |
 | ⌘D                       | Select word / add next occurrence to selection                                                                 |
 | ⇧⌘D                      | Select all occurrences of selected text / word under caret                                                     |
+| ⇧⌥↑ / ⇧⌥↓                | Duplicate the current line (or selected lines) above / below                                                   |
 | ⌥⌘F                      | Focus replacement field                                                                                        |
 | Return / ⇧Return in Find | Find next / previous (wraps)                                                                                   |
 | Return in Replace        | Replace selected match, then find next; All replaces every match                                               |

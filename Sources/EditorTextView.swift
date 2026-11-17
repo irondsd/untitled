@@ -61,6 +61,42 @@ final class EditorTextView: NSTextView {
         validateMultipleSelections()
     }
 
+    // MARK: Duplicate lines
+
+    @objc func duplicateLineUp(_ sender: Any?) { duplicateLines(down: false) }
+    @objc func duplicateLineDown(_ sender: Any?) { duplicateLines(down: true) }
+
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(duplicateLineUp(_:)) || item.action == #selector(duplicateLineDown(_:)) { return isEditable }
+        return super.validateUserInterfaceItem(item)
+    }
+
+    /// Copies the logical lines touched by the selection above or below them. Going down, the
+    /// selection follows the new copy; going up, it stays put, now on the upper copy.
+    private func duplicateLines(down: Bool) {
+        guard isEditable, let storage = textStorage else { return }
+        let text = storage.string as NSString
+        var selection = selectedRange()
+        multipleSelections = nil
+        // A selection ending right after a newline does not reach into the next line.
+        var span = selection
+        if span.length > 0, text.character(at: NSMaxRange(span) - 1) == 0x0A { span.length -= 1 }
+        let lines = text.lineRange(for: span)
+        var block = text.substring(with: lines)
+        if !block.hasSuffix("\n") { block = down ? "\n" + block : block + "\n" }
+        let location = down ? NSMaxRange(lines) : lines.location
+        let insertion = NSRange(location: location, length: 0)
+        // Keep surrounding typing as separate undo steps.
+        breakUndoCoalescing()
+        guard shouldChangeText(in: insertion, replacementString: block) else { return }
+        storage.replaceCharacters(in: insertion, with: block)
+        didChangeText()
+        undoManager?.setActionName(down ? "Duplicate Line Down" : "Duplicate Line Up")
+        if down { selection.location += (block as NSString).length }
+        setSelectedRange(selection)
+        scrollRangeToVisible(selection)
+    }
+
     override func mouseDown(with event: NSEvent) {
         if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command, event.clickCount == 1,
            let link = linkAt?(convert(event.locationInWindow, from: nil)) {

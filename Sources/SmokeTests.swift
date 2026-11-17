@@ -403,6 +403,42 @@ extension AppDelegate {
                 findView.cancelOperation(nil)
                 try check(!findController.isVisible, "Escape in editor also closes the find panel")
                 newTab(nil)
+                let duplicateView = editors[currentID!]!.textView
+                let duplicateFixture = "First 📝\nsecond line"
+                duplicateView.insertText(duplicateFixture, replacementRange: duplicateView.selectedRange())
+                duplicateView.breakUndoCoalescing()
+                try flush()
+                duplicateView.undoManager?.removeAllActions()
+                window.makeFirstResponder(duplicateView)
+                let editMenu = NSApp.mainMenu!.items.first { $0.title == "Edit" }!.submenu!
+                @MainActor func duplicateLine(_ title: String, _ arrow: Int) async throws {
+                    let item = editMenu.items.first { $0.title == title }!
+                    try check(item.keyEquivalent == String(Character(UnicodeScalar(arrow)!))
+                        && item.keyEquivalentModifierMask == [.shift, .option] && item.target == nil
+                        && duplicateView.validateUserInterfaceItem(item), "\(title) is bound to Shift-Option-arrow")
+                    try check(NSApp.sendAction(item.action!, to: duplicateView, from: item), "\(title) dispatches to the editor")
+                    try await Task.sleep(nanoseconds: 10_000_000) // Let the native undo group close.
+                }
+                try await duplicateLine("Duplicate Line Down", NSDownArrowFunctionKey)
+                try check(duplicateView.string == duplicateFixture + "\nsecond line"
+                    && duplicateView.selectedRange() == NSRange(location: (duplicateView.string as NSString).length, length: 0),
+                    "Shift-Option-Down copies the last line below and moves the caret onto the copy")
+                duplicateView.setSelectedRange(NSRange(location: 2, length: 3))
+                try await duplicateLine("Duplicate Line Up", NSUpArrowFunctionKey)
+                try check(duplicateView.string == "First 📝\nFirst 📝\nsecond line\nsecond line"
+                    && duplicateView.selectedRange() == NSRange(location: 2, length: 3),
+                    "Shift-Option-Up copies the line above and keeps the selection on the upper copy")
+                duplicateView.setSelectedRange(NSRange(location: 0, length: (duplicateView.string as NSString).length))
+                try await duplicateLine("Duplicate Line Down", NSDownArrowFunctionKey)
+                let fourLines = "First 📝\nFirst 📝\nsecond line\nsecond line"
+                try check(duplicateView.string == fourLines + "\n" + fourLines,
+                    "Shift-Option-Down copies every selected line")
+                try check(duplicateView.undoManager?.undoActionName == "Duplicate Line Down", "line duplication is named for undo")
+                for _ in 0..<3 where duplicateView.string != duplicateFixture { duplicateView.undoManager?.undo() }
+                try check(duplicateView.string == duplicateFixture, "undo restores the original lines")
+                while duplicateView.undoManager?.canRedo == true { duplicateView.undoManager?.redo() }
+                try check(duplicateView.string == fourLines + "\n" + fourLines, "redo reapplies line duplication")
+                newTab(nil)
                 let occurrenceID = currentID!
                 let occurrencePane = editors[occurrenceID]!
                 let occurrenceView = occurrencePane.textView

@@ -626,6 +626,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         item(edit, "Select Next Occurrence", #selector(selectNextOccurrence), "d", target: self)
         item(edit, "Select All Occurrences", #selector(selectAllOccurrences), "d", [.command, .shift], target: self)
         edit.addItem(.separator())
+        item(edit, "Duplicate Line Up", #selector(EditorTextView.duplicateLineUp(_:)),
+             String(Character(UnicodeScalar(NSUpArrowFunctionKey)!)), [.option, .shift])
+        item(edit, "Duplicate Line Down", #selector(EditorTextView.duplicateLineDown(_:)),
+             String(Character(UnicodeScalar(NSDownArrowFunctionKey)!)), [.option, .shift])
+        edit.addItem(.separator())
         item(edit, "Find and Replace…", #selector(showFind), "f", target: self)
         item(edit, "Replace…", #selector(showReplace), "f", [.command, .option], target: self)
         item(edit, "Find Next", #selector(findNext), "g", target: self)
