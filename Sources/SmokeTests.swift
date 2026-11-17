@@ -1321,7 +1321,7 @@ extension AppDelegate {
                 try check(currentID == beforeDropID, "hovering a file does not switch tabs")
                 try check(dropHeader.performDragOperation(fileDrag), "dropping a file on the header opens it")
                 let droppedID = currentID!
-                try check(store.records[droppedID]?.filePath == droppedURL.path
+                try check(store.records[droppedID]?.filePath == droppedURL.standardizedFileURL.path
                     && editors[droppedID]?.textView.string == "Dropped contents",
                     "dropped file opens its contents in an associated tab")
                 try check(try store.text(beforeDropID) == "Pending before drop" && !beforeDropPane.dirty,
@@ -1345,7 +1345,7 @@ extension AppDelegate {
                     "mixed file and folder drops count only regular files")
                 try check(dropHeader.performDragOperation(fileDrag)
                     && store.session.openIDs.count == countBeforeDuplicate + 1
-                    && store.records[currentID!]?.filePath == otherDroppedURL.path,
+                    && store.records[currentID!]?.filePath == otherDroppedURL.standardizedFileURL.path,
                     "multiple dropped files open in order and skip folders")
                 try check(try String(contentsOf: droppedURL, encoding: .utf8) == "Dropped contents",
                     "opening dropped files leaves the originals unchanged")
