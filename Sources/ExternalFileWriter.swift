@@ -27,25 +27,37 @@ enum ExternalFileWriter {
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent("untitled-save-\(UUID().uuidString)")
         try text.write(to: temp, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: temp) }
-        var errorInfo: NSDictionary?
-        guard let script = NSAppleScript(source: scriptSource(copying: temp.path, to: url.path)) else {
-            throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: url.path])
-        }
-        script.executeAndReturnError(&errorInfo)
-        guard let errorInfo else { return }
-        if errorInfo[NSAppleScript.errorNumber] as? Int == -128 { throw CocoaError(.userCancelled) }
-        let reason = errorInfo[NSAppleScript.errorMessage] as? String ?? "The administrator save failed."
-        throw NSError(domain: "untitled", code: 2, userInfo: [
-            NSLocalizedDescriptionKey: "Couldn’t save “\(url.lastPathComponent)” as administrator. \(reason)"])
+        try AdministratorScript.run(scriptSource(copying: temp.path, to: url.path),
+            failure: "Couldn’t save “\(url.lastPathComponent)” as administrator.")
     }
 
     static func scriptSource(copying source: String, to destination: String) -> String {
         let prompt = "untitled wants to save “\((destination as NSString).lastPathComponent)”."
-        return "do shell script \"/bin/cat \" & quoted form of \(literal(source)) & \" > \" & quoted form of \(literal(destination))"
-            + " with prompt \(literal(prompt)) with administrator privileges"
+        let command = "\"/bin/cat \" & quoted form of \(AdministratorScript.literal(source))"
+            + " & \" > \" & quoted form of \(AdministratorScript.literal(destination))"
+        return AdministratorScript.source(command: command, prompt: prompt)
+    }
+}
+
+enum AdministratorScript {
+    static func run(_ source: String, failure: String) throws {
+        var errorInfo: NSDictionary?
+        guard let script = NSAppleScript(source: source) else {
+            throw NSError(domain: "untitled", code: 2, userInfo: [NSLocalizedDescriptionKey: failure])
+        }
+        script.executeAndReturnError(&errorInfo)
+        guard let errorInfo else { return }
+        if errorInfo[NSAppleScript.errorNumber] as? Int == -128 { throw CocoaError(.userCancelled) }
+        let reason = errorInfo[NSAppleScript.errorMessage] as? String
+        throw NSError(domain: "untitled", code: 2, userInfo: [
+            NSLocalizedDescriptionKey: reason.map { "\(failure) \($0)" } ?? failure])
     }
 
-    private static func literal(_ string: String) -> String {
+    static func source(command: String, prompt: String) -> String {
+        "do shell script \(command) with prompt \(literal(prompt)) with administrator privileges"
+    }
+
+    static func literal(_ string: String) -> String {
         "\"" + string.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
     }
 }

@@ -14,11 +14,9 @@ The result is `build/untitled.app`. To also install it, run `./build.sh --instal
 
 ### Command line
 
-`unt` opens files from the shell, like `subl`: `unt notes.md config.yaml` opens each file as a tab (or focuses its existing tab), launching the app if needed. With no arguments it brings untitled to the front. It uses `/Applications/untitled.app` (so it follows `./build.sh --install`), then `~/Applications/untitled.app`, then the local `build/untitled.app` next to the script; set `UNTITLED_APP` to use another copy. Missing files and directories are rejected. To put it on your `PATH`, link it rather than copying it, so it can still find the local build:
+Choose **untitled → Install “unt” Command…** to link the bundled launcher at `/usr/local/bin/unt`. macOS asks for administrator approval if the directory requires it. Open a new terminal and use `type -a unt` to check whether an older manual copy takes precedence. Keep the app at the same path so the link continues to work after app updates.
 
-```sh
-ln -s "$PWD/unt" ~/bin/unt
-```
+`unt notes.md config.yaml` opens each file in its own tab or focuses the tab if it is already open. With no arguments it brings untitled to the front. The bundled launcher opens the app it belongs to. The script in the source checkout looks in `/Applications`, `~/Applications`, then the checkout’s `build` directory. Set `UNTITLED_APP` to use another copy.
 
 Use `unt -w file` (or `unt --wait file`) when a command needs to wait for the tab to close. With multiple files, it waits for all requested tabs. For Git commit messages, configure:
 

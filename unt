@@ -3,19 +3,23 @@
 # With no files, brings untitled to the front.
 set -euo pipefail
 
-# Prefer an installed copy, then the local build next to this script (symlinks resolved).
+# A bundled launcher opens its own app. A source checkout prefers an installed copy.
 find_app() {
   if [ -n "${UNTITLED_APP:-}" ]; then echo "$UNTITLED_APP"; return; fi
-  for app in /Applications/untitled.app "$HOME/Applications/untitled.app"; do
-    if [ -d "$app" ]; then echo "$app"; return; fi
-  done
-  local source="${BASH_SOURCE[0]}"
+  local source="${BASH_SOURCE[0]}" dir app
   while [ -L "$source" ]; do
-    local dir; dir="$(cd -P "$(dirname "$source")" && pwd)"
+    dir="$(cd -P "$(dirname "$source")" && pwd)"
     source="$(readlink "$source")"
     [[ "$source" != /* ]] && source="$dir/$source"
   done
-  echo "$(cd -P "$(dirname "$source")" && pwd)/build/untitled.app"
+  dir="$(cd -P "$(dirname "$source")" && pwd)"
+  case "$dir" in
+    *.app/Contents/Resources) printf '%s\n' "${dir%/Contents/Resources}"; return ;;
+  esac
+  for app in /Applications/untitled.app "$HOME/Applications/untitled.app"; do
+    if [ -d "$app" ]; then echo "$app"; return; fi
+  done
+  echo "$dir/build/untitled.app"
 }
 
 wait_for_close=false

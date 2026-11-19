@@ -594,6 +594,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         ])
     }
 
+    @objc private func installCLI(_ sender: Any?) {
+        perform {
+            guard let launcher = Bundle.main.url(forResource: "unt", withExtension: nil) else {
+                throw NSError(domain: "untitled", code: 3, userInfo: [NSLocalizedDescriptionKey:
+                    "The bundled unt command is missing. Rebuild or reinstall untitled."])
+            }
+            let destination = try CLIInstaller.install(launcher)
+            let alert = NSAlert()
+            alert.messageText = "Installed the unt command"
+            alert.informativeText = "unt is available at \(destination.path). Open a new terminal and run “command -v unt” to see which copy your shell uses."
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        }
+    }
+
     @objc func showFind(_ sender: Any? = nil) { findController.show() }
     @objc func selectNextOccurrence(_ sender: Any? = nil) {
         guard let id = currentID, let editor = editors[id]?.textView, window.firstResponder === editor else { return }
@@ -639,6 +654,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         item(app, "About untitled", #selector(showAbout), target: self)
         app.addItem(.separator())
         item(app, "Settings…", #selector(showSettings), ",", target: self)
+        item(app, "Install “unt” Command…", #selector(installCLI), target: self)
         app.addItem(.separator())
         let services = NSMenu(title: "Services")
         let servicesItem = app.addItem(withTitle: "Services", action: nil, keyEquivalent: "")

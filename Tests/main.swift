@@ -904,6 +904,32 @@ do {
     var compileError: NSDictionary?
     try check(NSAppleScript(source: awkward)?.compileAndReturnError(&compileError) == true && compileError == nil,
         "administrator save script compiles with quotes and backslashes in paths")
+
+    let launcher = root.appendingPathComponent("Example's \"app\".app/Contents/Resources/unt")
+    try FileManager.default.createDirectory(at: launcher.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try "#!/bin/sh\n".write(to: launcher, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: launcher.path)
+    let bin = root.appendingPathComponent("new bin", isDirectory: true)
+    let installed = try CLIInstaller.install(launcher, in: bin)
+    try check(try FileManager.default.destinationOfSymbolicLink(atPath: installed.path) == launcher.path,
+        "CLI installer creates the bin directory and links to the bundled launcher")
+    try check(try CLIInstaller.install(launcher, in: bin) == installed, "installing the same launcher twice succeeds")
+
+    try FileManager.default.removeItem(at: installed)
+    try "another command".write(to: installed, atomically: true, encoding: .utf8)
+    try check((try? CLIInstaller.install(launcher, in: bin)) == nil, "CLI installer rejects an existing command")
+    try check(try String(contentsOf: installed, encoding: .utf8) == "another command", "CLI installer preserves the existing command")
+    try FileManager.default.removeItem(at: installed)
+    let missingLauncher = root.appendingPathComponent("missing")
+    try FileManager.default.createSymbolicLink(at: installed, withDestinationURL: missingLauncher)
+    try check((try? CLIInstaller.install(launcher, in: bin)) == nil, "CLI installer rejects a dangling link")
+    try check(try FileManager.default.destinationOfSymbolicLink(atPath: installed.path) == missingLauncher.path,
+        "CLI installer preserves the dangling link")
+
+    let privilegedInstall = CLIInstaller.scriptSource(launcher: launcher, directory: bin)
+    compileError = nil
+    try check(NSAppleScript(source: privilegedInstall)?.compileAndReturnError(&compileError) == true && compileError == nil,
+        "administrator CLI installer script compiles with spaces and quotes in paths")
     print("\n\(count) storage, line-index, find and syntax checks passed")
 } catch {
     fputs("FAIL: \(error.localizedDescription)\n", stderr)
