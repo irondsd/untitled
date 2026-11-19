@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     let findController = FindController()
     let occurrenceController = OccurrenceController()
     private var startupURLs: [URL] = []
+    private var cliWaits: [URL: (request: CLIWaitRequest, tabs: [UUID: URL])] = [:]
     /// Closed this launch; older notes reopen from the archive, newest first.
     var closedTabs: [ClosedTab] = []
     private let headerHeight: CGFloat = 38
@@ -58,7 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             buildMenus()
             buildWindow()
             try displaySelected()
-            for url in startupURLs { try openFile(url) }
+            for url in startupURLs { try handleOpenURL(url) }
             startupURLs.removeAll()
             if !isSmokeTesting {
                 window.makeKeyAndOrderFront(nil)
@@ -254,7 +255,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     func close(_ id: UUID) throws {
         try flush()
         let record = store.records[id], index = store.session.openIDs.firstIndex(of: id)
+        let isWaiting = cliWaits.values.contains { $0.tabs[id] != nil }
+        let saved = isWaiting ? NotesStore.hash(try store.text(id)) == record?.savedFileHash : false
         try store.archive(id)
+        if isWaiting { finishCLIWaits(for: id, savedPath: saved ? record?.filePath : nil) }
         if let index {
             if store.records[id] != nil { closedTabs.append(ClosedTab(noteID: id, index: index)) }
             else if record?.openedFromFile == true, let path = record?.filePath { closedTabs.append(ClosedTab(filePath: path, index: index)) }
@@ -426,12 +430,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             self.perform { for url in panel.urls { try self.openFile(url) } }
         }
     }
-    func openFile(_ url: URL) throws {
+    @discardableResult
+    func openFile(_ url: URL, waiting: Bool = false) throws -> UUID {
         try flush()
         let path = url.standardizedFileURL.path
-        if let record = store.records.values.first(where: { $0.filePath == path }) {
+        let openRecord = store.session.openIDs.lazy.compactMap { self.store.records[$0] }
+            .first { $0.filePath == path }
+        if !waiting, let record = openRecord ?? store.records.values.lazy.filter({ $0.filePath == path }).max(by: {
+            ($0.archivedAt ?? $0.modifiedAt) < ($1.archivedAt ?? $1.modifiedAt)
+        }) {
             try restore(record.id)
-            return
+            return record.id
         }
         let data = try Data(contentsOf: url)
         if data.starts(with: Array("bplist00".utf8)) {
@@ -443,8 +452,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
               !text.contains("\0") else {
             throw NSError(domain: "untitled", code: 1, userInfo: [NSLocalizedDescriptionKey: "This file is not supported text. Open a UTF-8 or UTF-16 text file."])
         }
-        _ = try store.create(text: text, filePath: path)
+        if let record = openRecord {
+            guard NotesStore.hash(text) == record.savedFileHash else {
+                throw NSError(domain: "untitled", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                    "\(url.lastPathComponent) changed on disk. Close its existing tab before retrying."])
+            }
+            try switchTab(record.id)
+            return record.id
+        }
+        // A caller such as Git may reuse the filename with new contents. Archived drafts
+        // remain recoverable, while a new wait request starts from the current file.
+        let id = try store.create(text: text, filePath: path)
         try displaySelected()
+        return id
+    }
+
+    private func handleOpenURL(_ url: URL) throws {
+        guard let request = CLIWaitRequest(file: url) else { try openFile(url); return }
+        guard !request.hasReply else { return }
+        cliWaits = cliWaits.filter { $0.value.request.isPending }
+        do {
+            var tabs: [UUID: URL] = [:]
+            for file in try request.files() { tabs[try openFile(file, waiting: true)] = file }
+            try request.accept()
+            cliWaits[url] = (request, tabs)
+        } catch {
+            request.finish(error.localizedDescription)
+        }
+    }
+
+    private func finishCLIWaits(for id: UUID, savedPath: String?) {
+        for url in Array(cliWaits.keys) {
+            guard var wait = cliWaits[url], let file = wait.tabs.removeValue(forKey: id) else { continue }
+            if savedPath != file.path {
+                wait.request.finish("Closed \(file.lastPathComponent) without saving changes to the file.")
+            } else if wait.tabs.isEmpty {
+                wait.request.finish()
+            } else {
+                cliWaits[url] = wait
+                continue
+            }
+            cliWaits.removeValue(forKey: url)
+        }
     }
     @objc private func saveDocument(_ sender: Any?) {
         guard let id = currentID, let record = store.records[id], let pane = editors[id] else { return }
@@ -734,12 +783,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         do { try flush(); return .terminateNow }
         catch { showError(error); return .terminateCancel }
     }
+    func applicationWillTerminate(_ notification: Notification) {
+        for wait in cliWaits.values { wait.request.finish("untitled quit before the requested tabs were closed.") }
+    }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         showMainWindow(nil); return true
     }
     func application(_ sender: NSApplication, open urls: [URL]) {
         guard store != nil, window != nil else { startupURLs.append(contentsOf: urls); return }
-        perform { for url in urls { try openFile(url) }; window.makeKeyAndOrderFront(nil) }
+        for url in urls { perform { try handleOpenURL(url) } }
+        window.makeKeyAndOrderFront(nil)
     }
     func perform(_ work: () throws -> Void) {
         do { try work() } catch CocoaError.userCancelled {} catch { showError(error) }

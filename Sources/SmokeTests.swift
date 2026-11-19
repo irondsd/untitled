@@ -1373,6 +1373,47 @@ extension AppDelegate {
                 fileDrag.draggingPasteboard.setString("https://example.com/file.txt", forType: .string)
                 try check(dropHeader.draggingEntered(fileDrag).isEmpty && !dropHeader.performDragOperation(fileDrag),
                     "header rejects text and web addresses")
+
+                @MainActor func makeWaitRequest(_ files: [URL]) throws -> (request: URL, result: URL) {
+                    let directory = store.root.appendingPathComponent("unt-wait." + UUID().uuidString)
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
+                        attributes: [.posixPermissions: 0o700])
+                    let request = directory.appendingPathComponent("request.unt-wait")
+                    try Data(files.flatMap { Array($0.path.utf8) + [0] }).write(to: request)
+                    return (request, directory.appendingPathComponent("result"))
+                }
+                let commitFile = store.root.appendingPathComponent("COMMIT_EDITMSG")
+                try "# Git template\n".write(to: commitFile, atomically: true, encoding: .utf8)
+                let wait = try makeWaitRequest([droppedURL, commitFile])
+                application(NSApp, open: [wait.request])
+                let commitID = currentID!
+                try check(editors[commitID]?.textView.string == "# Git template\n"
+                    && FileManager.default.fileExists(atPath: wait.request.deletingLastPathComponent()
+                        .appendingPathComponent("accepted").path), "wait request opens the file and signals readiness")
+                try close(droppedID)
+                try check(!FileManager.default.fileExists(atPath: wait.result.path), "wait continues while a requested tab is open")
+                editors[commitID]!.textView.insertText("Write a message\n\n", replacementRange: NSRange(location: 0, length: 0))
+                try check(NSApp.mainMenu!.performKeyEquivalent(with: saveEvent), "waited file supports the normal Save command")
+                try check(!FileManager.default.fileExists(atPath: wait.result.path), "saving does not end the wait")
+                try close(commitID)
+                try check(try Data(contentsOf: wait.result).isEmpty
+                    && String(contentsOf: commitFile, encoding: .utf8) == "Write a message\n\n# Git template\n",
+                    "closing the saved tab completes the request with the edited file on disk")
+
+                let cancelWait = try makeWaitRequest([commitFile])
+                application(NSApp, open: [cancelWait.request])
+                let draftID = currentID!
+                editors[draftID]!.textView.insertText("Unsaved ", replacementRange: NSRange(location: 0, length: 0))
+                try close(draftID)
+                try check(try !Data(contentsOf: cancelWait.result).isEmpty && store.archived.contains { $0.id == draftID },
+                    "closing without saving fails the CLI request and preserves the draft")
+                try "# A new Git template\n".write(to: commitFile, atomically: true, encoding: .utf8)
+                let nextWait = try makeWaitRequest([commitFile])
+                application(NSApp, open: [nextWait.request])
+                try check(currentID != draftID && editors[currentID!]?.textView.string == "# A new Git template\n",
+                    "a repeated wait request opens the latest file instead of the archived draft")
+                try close(currentID!)
+
                 let report: [String: Any] = ["passed": true, "checks": checks]
                 let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
                 try data.write(to: store.root.appendingPathComponent("smoke-results.json"))

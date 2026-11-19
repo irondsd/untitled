@@ -1,5 +1,5 @@
 #!/bin/bash
-# Open files in untitled from the shell: unt [file ...]
+# Open files in untitled from the shell: unt [-w|--wait] [--] [file ...]
 # With no files, brings untitled to the front.
 set -euo pipefail
 
@@ -18,6 +18,16 @@ find_app() {
   echo "$(cd -P "$(dirname "$source")" && pwd)/build/untitled.app"
 }
 
+wait_for_close=false
+case "${1:-}" in
+  -w|--wait) wait_for_close=true; shift ;;
+esac
+if [ "${1:-}" = -- ]; then shift; fi
+if $wait_for_close && [ "$#" -eq 0 ]; then
+  echo "unt: --wait requires at least one file" >&2
+  exit 2
+fi
+
 app="$(find_app)"
 if [ ! -d "$app" ]; then
   echo "unt: untitled.app not found at $app (run ./build.sh or set UNTITLED_APP)" >&2
@@ -29,4 +39,45 @@ for file in "$@"; do
   if [ ! -e "$file" ]; then echo "unt: $file does not exist" >&2; exit 1; fi
 done
 
-exec open -a "$app" "$@"
+if ! $wait_for_close; then
+  exec open -a "$app" "$@"
+fi
+
+if [ "$(/usr/libexec/PlistBuddy -c 'Print :UntitledCLIWait' "$app/Contents/Info.plist" 2>/dev/null || true)" != true ]; then
+  echo "unt: $app does not support --wait. Update it or set UNTITLED_APP to an updated build." >&2
+  exit 1
+fi
+
+request_dir="$(mktemp -d "${TMPDIR:-/tmp}/unt-wait.XXXXXXXX")"
+trap 'rm -rf -- "$request_dir"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+request="$request_dir/request.unt-wait"
+for file in "$@"; do
+  [[ "$file" = /* ]] || file="$PWD/$file"
+  printf '%s\0' "$file"
+done > "$request"
+open -a "$app" "$request"
+
+started=$SECONDS
+app_pid=
+while [ ! -f "$request_dir/result" ]; do
+  if [ -n "$app_pid" ]; then
+    if ! kill -0 "$app_pid" 2>/dev/null; then
+      [ -f "$request_dir/result" ] && break
+      echo "unt: untitled exited before finishing the edit" >&2
+      exit 1
+    fi
+  elif [ -f "$request_dir/accepted" ]; then
+    app_pid="$(cat "$request_dir/accepted")"
+  elif (( SECONDS - started >= 15 )); then
+    echo "unt: untitled did not accept the edit request. Restart it and try again." >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+
+if [ -s "$request_dir/result" ]; then
+  printf 'unt: %s\n' "$(cat "$request_dir/result")" >&2
+  exit 1
+fi

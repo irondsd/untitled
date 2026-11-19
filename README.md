@@ -20,6 +20,14 @@ The result is `build/untitled.app`. To also install it, run `./build.sh --instal
 ln -s "$PWD/unt" ~/bin/unt
 ```
 
+Use `unt -w file` (or `unt --wait file`) when a command needs to wait for the tab to close. With multiple files, it waits for all requested tabs. For Git commit messages, configure:
+
+```sh
+git config --global core.editor 'unt -w'
+```
+
+Write the message, press ⌘S to save to Git's file, then press ⌘W to close the tab. Closing a requested tab with unsaved changes keeps the draft in the archive and exits with an error so Git can abort. Quitting untitled cancels outstanding requests. If `unt` finds an older installed copy, update it with `./build.sh --install` or point `UNTITLED_APP` at the updated local build.
+
 To regenerate the app and document icons, run `./make-icon.sh`, then `./build.sh`. The icon script renders the ten standard/Retina sizes from `MakeIcon.swift` and `MakeDocumentIcon.swift` and packages them with Apple's `iconutil`. Keep this packaging step: manually placing PNGs in the small ICNS representation slots can produce scrambled icons in Finder and Activity Monitor even when the Dock looks correct.
 
 Supported text/source files share a folded-page document icon with the app's `u_` mark. To choose untitled as the default for a file type, select a file in Finder, open Get Info, choose untitled under Open with, and click Change All. Repeat for each desired file type. Installing the app does not change existing default-app preferences; Finder may take time to refresh cached icons.

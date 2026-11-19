@@ -12,6 +12,7 @@
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
+    <key>UntitledCLIWait</key><true/>
     <key>NSHumanReadableCopyright</key><string>untitled</string>
     <key>CFBundleDocumentTypes</key><array><dict>
         <key>CFBundleTypeName</key><string>Text File</string>
