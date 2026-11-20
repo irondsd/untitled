@@ -43,8 +43,7 @@ final class OccurrenceController {
         let source = editor.string as NSString
         guard let first = selections.first, first.length > 0, NSMaxRange(first) <= source.length else { clear(); return }
         let text = source.substring(with: first)
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              selections.allSatisfy({ $0.length > 0 && NSMaxRange($0) <= source.length && source.substring(with: $0) == text }) else { clear(); return }
+        guard selections.allSatisfy({ $0.length > 0 && NSMaxRange($0) <= source.length && source.substring(with: $0) == text }) else { clear(); return }
         if !addingSelection && selections != lastSelections { lastAdded = selections.last }
         lastSelections = selections
         guard text != needle else { return }
@@ -65,7 +64,8 @@ final class OccurrenceController {
                 self.matches = found
                 if let editor, let found, found.ranges.count > 1 {
                     let color = NSColor.systemYellow.withAlphaComponent(0.20)
-                    for range in found.ranges {
+                    // Overlapping literals (runs of spaces) highlight only what ⇧⌘D would select.
+                    for range in found.all(including: editor.editingSelectedRanges.map(\.rangeValue)) {
                         editor.layoutManager?.addTemporaryAttribute(.backgroundColor, value: color, forCharacterRange: range)
                     }
                 }
@@ -86,8 +86,7 @@ final class OccurrenceController {
         if editor.selectedRange().length == 0 {
             let range = editor.selectionRange(forProposedRange: editor.selectedRange(), granularity: .selectByWord)
             let source = editor.string as NSString
-            guard range.length > 0, NSMaxRange(range) <= source.length,
-                  !source.substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            guard range.length > 0, NSMaxRange(range) <= source.length else { return }
             editor.setSelectedRange(range)
             selectionDidChange()
             return

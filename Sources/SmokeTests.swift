@@ -534,6 +534,26 @@ extension AppDelegate {
                 selectNextOccurrence()
                 try await waitForOccurrences()
                 try check(occurrenceView.selectedRanges.count == 3, "rapid Command-D presses queue while matching runs")
+                newTab(nil)
+                let spaceView = editors[currentID!]!.textView
+                spaceView.insertText("        a\n      b\n", replacementRange: spaceView.selectedRange())
+                window.makeFirstResponder(spaceView)
+                spaceView.setSelectedRange(NSRange(location: 0, length: 4))
+                try await waitForOccurrences()
+                try check(occurrenceController.matches != nil
+                    && spaceView.layoutManager?.temporaryAttribute(.backgroundColor, atCharacterIndex: 4, effectiveRange: nil) != nil
+                    && spaceView.layoutManager?.temporaryAttribute(.backgroundColor, atCharacterIndex: 14, effectiveRange: nil) == nil,
+                    "whitespace selections highlight non-overlapping repeats")
+                selectNextOccurrence()
+                selectNextOccurrence()
+                try check((spaceView as! EditorTextView).editingSelectedRanges.map(\.rangeValue.location) == [0, 4, 10],
+                    "Command-D on whitespace walks left to right without overlapping")
+                spaceView.setSelectedRange(NSRange(location: 0, length: 1))
+                selectAllOccurrences()
+                try await waitForOccurrences()
+                try check((spaceView as! EditorTextView).editingSelectedRanges.count == 14, "Command-Shift-D selects every single space")
+                try switchTab(occurrenceID)
+                try await waitForOccurrences()
                 showFind()
                 try await waitForFind()
                 try check(findController.results?.matches.count == 4 && occurrenceController.matches == nil,
